@@ -88,6 +88,57 @@ def calculate_iching_weight(df_m7: pd.DataFrame, element: str) -> dict[str, Any]
     }
 
 
+def evaluate_micro_distortion(
+    df_s15: pd.DataFrame,
+    current_minor_card: str | None,
+    macro_trend: str | None,
+) -> str:
+    """Promote an extreme Minor Arcana card when the S15 pressure agrees.
+
+    The latest four S15 bars form the micro impulse. A volume spike is measured
+    against the preceding four-bar average when available; without that baseline,
+    the function conservatively declines to promote the card.
+    """
+    if not current_minor_card or len(df_s15) < 4 or not {"open", "close", "volume"}.issubset(df_s15.columns):
+        return current_minor_card or ""
+
+    card_parts = current_minor_card.upper().split("_")
+    if len(card_parts) != 2 or card_parts[0] not in {"WANDS", "CUPS", "SWORDS", "PENTACLES"} or card_parts[1] not in {"8", "9", "10"}:
+        return current_minor_card
+
+    recent = df_s15[["open", "close", "volume"]].tail(4).apply(pd.to_numeric, errors="coerce")
+    if recent.isna().any().any():
+        return current_minor_card
+
+    net_delta = float(recent["close"].iloc[-1] - recent["open"].iloc[0])
+    reference_price = max(abs(float(recent["open"].iloc[0])), 1e-12)
+    delta_ratio = abs(net_delta) / reference_price
+    prior = df_s15["volume"].iloc[:-4].tail(4).apply(pd.to_numeric, errors="coerce").dropna()
+    if prior.empty:
+        return current_minor_card
+    volume_ratio = float(recent["volume"].sum()) / max(float(prior.mean()) * 4, 1e-12)
+    if delta_ratio < 0.0005 or volume_ratio < 1.5:
+        return current_minor_card
+
+    normalized_macro = (macro_trend or "").upper()
+    moving_down = net_delta < 0
+    direction_matches = (moving_down and normalized_macro in {"DOWN", "DOWN_CONFIRMED"}) or (
+        not moving_down and normalized_macro in {"UP", "UP_CONFIRMED"}
+    )
+    if not direction_matches:
+        return current_minor_card
+
+    suit = card_parts[0]
+    volatility_weight = df_s15.attrs.get("volatility_weight")
+    if volatility_weight is None and "volatility_weight" in df_s15.columns:
+        volatility_weight = df_s15["volatility_weight"].iloc[-1]
+    try:
+        field_is_synchronized = float(volatility_weight) >= 1.0
+    except (TypeError, ValueError):
+        field_is_synchronized = False
+    return f"KING_OF_{suit}" if field_is_synchronized else f"KNIGHT_OF_{suit}"
+
+
 def get_archetype_parameters(element: str, card_name: str) -> dict[str, float]:
     """Return volatility-sensitive thresholds for a Major Arcana archetype."""
     parameters: dict[str, float] = {

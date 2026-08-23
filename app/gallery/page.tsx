@@ -7,15 +7,7 @@ import { useMemo } from "react";
 import TarotCard, { type TarotCardProps, type TriLayerStatus, type WuxingPhase } from "@/components/TarotCard";
 import { useMarketStream } from "@/hooks/useMarketStream";
 
-type GalleryCard = TarotCardProps & { index: number };
-
-type SignalUpdate = {
-  symbol?: string;
-  wuxing_phase?: string;
-  hexagram_binary?: string;
-  tri_layer?: Partial<TriLayerStatus>;
-  status?: Partial<TriLayerStatus>;
-};
+type GalleryCard = TarotCardProps & { index: number; isLive: boolean };
 
 const arcanaCards: Array<Pick<GalleryCard, "index" | "cardName" | "symbol">> = [
   { index: 0, cardName: "0_THE_FOOL", symbol: "DOGEUSD" },
@@ -50,6 +42,7 @@ const microStates = ["FILLING", "STABLE", "NOISE", "PRESSURE"];
 function demoState(index: number): GalleryCard {
   return {
     ...arcanaCards[index],
+    isLive: false,
     wuxing_phase: phases[index % phases.length],
     hexagramBinary: index.toString(2).padStart(6, "0"),
     tri_layer: {
@@ -60,45 +53,54 @@ function demoState(index: number): GalleryCard {
   };
 }
 
+function PendingCard({ card }: { card: GalleryCard }) {
+  return (
+    <motion.article
+      className="flex min-h-[390px] flex-col justify-between rounded-xl border border-dashed border-white/15 bg-white/[0.025] p-4 text-stone-600 backdrop-blur-xl"
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -4, scale: 1.02, transition: { duration: 0.2 } }}
+    >
+      <div className="flex items-start justify-between border-b border-white/10 pb-3">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-[0.28em]">Major arcana</p>
+          <h2 className="mt-1 text-lg font-medium text-stone-500">{card.cardName}</h2>
+        </div>
+        <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[9px] tracking-[0.18em]">WAIT</span>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4">
+        <div className="h-32 w-20 rounded-[45%_45%_20%_20%] border border-white/10 bg-black/10 shadow-inner shadow-white/5" />
+        <p className="font-mono text-[10px] uppercase tracking-[0.25em]">Awaiting signal</p>
+      </div>
+      <div className="border-t border-white/10 pt-3 font-mono text-xs tracking-[0.14em] text-stone-500">{card.symbol}</div>
+    </motion.article>
+  );
+}
+
 function phaseFrom(value: string | undefined, fallback: WuxingPhase): WuxingPhase {
   const normalized = value?.toUpperCase() as WuxingPhase | undefined;
   return normalized && phases.includes(normalized) ? normalized : fallback;
 }
 
-function mergeUpdate(previous: GalleryCard[], update: SignalUpdate): GalleryCard[] {
-  if (!update.symbol) return previous;
-  return previous.map((card) => {
-    if (card.symbol !== update.symbol) return card;
-    const incomingStatus = update.tri_layer ?? update.status ?? {};
-    const hexagramBinary = update.hexagram_binary ?? (incomingStatus as Partial<SignalUpdate>).hexagram_binary;
-    return {
-      ...card,
-      wuxing_phase: phaseFrom(update.wuxing_phase, card.wuxing_phase),
-      hexagramBinary: /^[01]{6}$/.test(hexagramBinary ?? "") ? hexagramBinary : card.hexagramBinary,
-      tri_layer: {
-        macro: incomingStatus.macro ?? card.tri_layer.macro,
-        meso: incomingStatus.meso ?? card.tri_layer.meso,
-        micro: incomingStatus.micro ?? card.tri_layer.micro,
-      },
-    };
-  });
-}
-
 export default function GalleryPage() {
   const { marketDataMap, isConnected } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws/signals");
   const demoCards = useMemo(() => arcanaCards.map((_, index) => demoState(index)), []);
-  const cards = useMemo(() => demoCards.map((card) => {
-    const live = marketDataMap[card.symbol];
-    if (!live) return card;
-    return {
-      ...card,
-      wuxing_phase: phaseFrom(live.wuxing_phase, card.wuxing_phase),
-      hexagramBinary: live.hexagram_binary,
-      tri_layer: live.tri_layer,
-    };
-  }), [demoCards, marketDataMap]);
+  const liveCards = useMemo(() => Object.values(marketDataMap).map((live, index): GalleryCard => ({
+    index,
+    isLive: true,
+    cardName: live.major_arcana || arcanaCards.find((card) => card.symbol === live.symbol)?.cardName || "UNKNOWN_ARCANA",
+    symbol: live.symbol,
+    wuxing_phase: phaseFrom(live.wuxing_phase, "EARTH"),
+    hexagramBinary: live.hexagram_binary,
+    tri_layer: live.tri_layer,
+  })), [marketDataMap]);
+  const cards = useMemo(() => {
+    const liveSymbols = new Set(liveCards.map((card) => card.symbol));
+    const placeholders = demoCards.filter((card) => !liveSymbols.has(card.symbol));
+    return [...liveCards, ...placeholders];
+  }, [demoCards, liveCards]);
 
-  const activeCount = useMemo(() => cards.filter((card) => card.tri_layer.micro !== "STABLE").length, [cards]);
+  const activeCount = useMemo(() => Object.values(marketDataMap).filter((card) => card.tri_layer.micro !== "STABLE").length, [marketDataMap]);
   const updatedSymbol = Object.keys(marketDataMap).at(-1) ?? null;
 
   return (
@@ -121,7 +123,7 @@ export default function GalleryPage() {
         </header>
 
         <section aria-label="Major Arcana market gallery" className="grid grid-cols-2 items-start gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-          {cards.map((card, index) => (
+          {Object.values(cards).map((card, index) => (
             <motion.div
               className="relative z-0"
               key={card.symbol}
@@ -130,7 +132,7 @@ export default function GalleryPage() {
               transition={{ delay: index * 0.035, duration: 0.5 }}
               whileHover={{ scale: 1.045, zIndex: 30, transition: { duration: 0.2 } }}
             >
-              <TarotCard {...card} />
+              {card.isLive ? <TarotCard {...card} /> : <PendingCard card={card} />}
             </motion.div>
           ))}
         </section>

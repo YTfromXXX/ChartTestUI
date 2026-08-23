@@ -18,7 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from tarot_engine import (
     MAJOR_ARCANA_SYMBOLS,
     WATCHLIST_SYMBOLS,
+    calculate_iching_weight,
     calculate_minor_arcana,
+    calculate_iching_weight,
+    evaluate_micro_distortion,
     evaluate_court_card,
 )
 
@@ -206,6 +209,31 @@ def _fetch_m7_frame(symbol: str) -> pd.DataFrame | None:
         return None
 
 
+def _fetch_s15_frame(symbol: str) -> pd.DataFrame | None:
+    """Aggregate recent MT5 ticks into 15-second OHLCV bars."""
+    if mt5 is None or not hasattr(mt5, "copy_ticks_from_pos"):
+        return None
+    try:
+        flags = getattr(mt5, "COPY_TICKS_ALL", 0)
+        ticks = mt5.copy_ticks_from_pos(symbol, 0, 600, flags)
+        if ticks is None or len(ticks) == 0:
+            return None
+        frame = pd.DataFrame(ticks)
+        price_column = "last" if "last" in frame.columns else "bid"
+        if price_column not in frame.columns or "time" not in frame.columns:
+            return None
+        frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+        frame["price"] = pd.to_numeric(frame[price_column], errors="coerce")
+        frame["volume"] = pd.to_numeric(frame.get("volume", 0), errors="coerce").fillna(0)
+        return frame.dropna(subset=["time", "price"]).set_index("time").resample("15s").agg(
+            open=("price", "first"), high=("price", "max"), low=("price", "min"),
+            close=("price", "last"), volume=("volume", "sum"),
+        ).dropna(subset=["open", "high", "low", "close"])
+    except Exception:
+        logger.exception("Failed to aggregate S15 ticks for %s.", symbol)
+        return None
+
+
 def _coingecko_symbol(symbol: str) -> str | None:
     """Map supported terminal symbols to CoinGecko coin IDs."""
     return {"BTCUSD": "bitcoin", "BTCXAU": "bitcoin"}.get(symbol)
@@ -305,8 +333,19 @@ def fetch_and_calculate_sync(symbol: str | None = None) -> dict[str, Any] | None
             signal["symbol"] = current_symbol
             m7_frame = _fetch_m7_frame(current_symbol)
             signal["wuxing_phase"] = calculate_wuxing_phase(m7_frame) if m7_frame is not None else None
-            signal["minor_arcana"] = calculate_minor_arcana(m7_frame, symbol=current_symbol) if m7_frame is not None else None
+            minor_card = calculate_minor_arcana(m7_frame, symbol=current_symbol) if m7_frame is not None else None
+            signal["minor_arcana"] = minor_card
             signal["chart_data"] = _chart_data_from_frame(m7_frame)
+            s15_frame = _fetch_s15_frame(current_symbol)
+            if m7_frame is not None and s15_frame is not None:
+                iching = calculate_iching_weight(m7_frame, _element_for_symbol(current_symbol))
+                s15_frame.attrs["volatility_weight"] = iching["volatility_weight"]
+                macro_trend = "DOWN" if isinstance(minor_card, str) and minor_card.startswith("SWORDS_") else "UP" if isinstance(minor_card, str) and minor_card.startswith("WANDS_") else "NEUTRAL"
+                promoted = evaluate_micro_distortion(s15_frame, minor_card, macro_trend)
+                signal["minor_arcana"] = promoted or minor_card
+                signal["s15_delta"] = float(s15_frame["close"].iloc[-1] - s15_frame["open"].iloc[0]) if len(s15_frame) >= 4 else 0.0
+                signal["s15_volume"] = float(s15_frame["volume"].tail(4).sum())
+                signal["is_emperor_synchronized"] = signal["minor_arcana"].startswith("KING_") if isinstance(signal["minor_arcana"], str) else False
             signals[current_symbol] = signal
         except Exception:
             logger.exception("Failed to fetch tick data for %s.", current_symbol)
@@ -351,6 +390,14 @@ def _major_arcana_for_symbol(symbol: str) -> str | None:
         if entry["symbol"] == symbol:
             return entry["card"]
     return None
+
+
+def _element_for_symbol(symbol: str) -> str:
+    """Resolve the mapped Wu Xing element for a monitored symbol."""
+    for entry in MAJOR_ARCANA_SYMBOLS.values():
+        if entry["symbol"] == symbol:
+            return entry["element"]
+    return "EARTH"
 
 
 def _tarot_screener_payload(symbol: str, signal: dict[str, Any]) -> dict[str, Any]:
