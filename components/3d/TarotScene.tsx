@@ -7,14 +7,17 @@ import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import CameraController from './CameraController';
 import DataTornado from './DataTornado';
+import HexagramTemple from './HexagramTemple';
 
 type TarotSceneData = {
   cardName: string;
   symbol: string;
+  knotType?: string;
   wuxingPhase: string;
   isEmperorSynchronized: boolean;
   s15Volume: number;
   s15Delta: number;
+  hexagramBinary?: string;
 };
 
 type TarotSceneProps = {
@@ -63,7 +66,8 @@ export default function TarotScene({ data, className }: TarotSceneProps) {
         <OrbitControls ref={controlsRef} enabled={!data.isEmperorSynchronized} enableDamping enableZoom />
         <TarotCard3D data={data} />
         <group position={[0.25, 0, 0]}>
-          <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} />
+          <HexagramTemple hexagramBinary={data.hexagramBinary ?? '101100'} />
+          <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} />
         </group>
         <Environment preset="night" />
       </Canvas>

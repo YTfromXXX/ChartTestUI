@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import ManaMagicCircle from '../ManaMagicCircle';
 import TarotScene from './TarotScene';
 
 export default function TarotSceneDemo() {
@@ -26,13 +27,16 @@ export default function TarotSceneDemo() {
           data={{
             cardName: 'THE EMPEROR',
             symbol: 'US500',
+            knotType: 'タークス・ヘッド',
             wuxingPhase: 'FIRE',
             isEmperorSynchronized: isSynchronized,
             s15Volume: isSynchronized ? 900 : 280,
             s15Delta: isSynchronized ? -70 : -12,
+            hexagramBinary: isSynchronized ? '101100' : '010101',
           }}
         />
       </div>
+      <ManaMagicCircle manaPool={{ FIRE: isSynchronized ? 820 : 240, WATER: 430, AIR: 610, EARTH: 290, METAL: 540 }} />
     </section>
   );
 }

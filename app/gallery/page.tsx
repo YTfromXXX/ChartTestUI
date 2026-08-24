@@ -132,7 +132,9 @@ export default function GalleryPage() {
               transition={{ delay: index * 0.035, duration: 0.5 }}
               whileHover={{ scale: 1.045, zIndex: 30, transition: { duration: 0.2 } }}
             >
-              {card.isLive ? <TarotCard {...card} /> : <PendingCard card={card} />}
+              <Link href={`/live/${encodeURIComponent(card.symbol)}`} className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+                {card.isLive ? <TarotCard {...card} /> : <PendingCard card={card} />}
+              </Link>
             </motion.div>
           ))}
         </section>

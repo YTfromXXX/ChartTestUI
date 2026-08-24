@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
+*.tsbuildinfo
 *$py.class
 
 # C extensions
@@ -60,6 +61,7 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+magic_ledger.db
 
 # Flask stuff:
 instance/

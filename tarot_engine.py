@@ -139,6 +139,68 @@ def evaluate_micro_distortion(
     return f"KING_OF_{suit}" if field_is_synchronized else f"KNIGHT_OF_{suit}"
 
 
+def evaluate_court_promotion(
+    df_s15: pd.DataFrame,
+    current_minor_card: str,
+    macro_trend: str,
+    volatility_weight: float,
+) -> str:
+    """Promote a mature numbered card when four S15 bars break out.
+
+    Volume is compared with the preceding four-bar average. Delta is the sum of each
+    S15 candle body, normalized by the opening price so the thresholds work across
+    instruments with different price scales.
+    """
+    if not current_minor_card or len(df_s15) < 4:
+        return current_minor_card
+    if not {"open", "close"}.issubset(df_s15.columns):
+        return current_minor_card
+
+    card_parts = current_minor_card.upper().split("_")
+    suits = {"WANDS", "CUPS", "SWORDS", "PENTACLES"}
+    suit = next((part for part in card_parts if part in suits), None)
+    strength = next((part for part in card_parts if part in {"8", "9", "10"}), None)
+    if suit is None or strength is None:
+        return current_minor_card
+
+    volume_column = "tick_volume" if "tick_volume" in df_s15.columns else "volume"
+    if volume_column not in df_s15.columns or len(df_s15) <= 4:
+        return current_minor_card
+
+    recent = df_s15[["open", "close", volume_column]].tail(4).apply(pd.to_numeric, errors="coerce")
+    reference = df_s15[volume_column].iloc[:-4].tail(4).apply(pd.to_numeric, errors="coerce").dropna()
+    if recent.isna().any().any() or reference.empty:
+        return current_minor_card
+
+    volume_sum = float(recent[volume_column].sum())
+    reference_sum = float(reference.mean()) * 4
+    volume_ratio = volume_sum / max(reference_sum, 1e-12)
+    cumulative_delta = float((recent["close"] - recent["open"]).sum())
+    opening_price = max(abs(float(recent["open"].iloc[0])), 1e-12)
+    delta_ratio = abs(cumulative_delta) / opening_price
+
+    try:
+        tolerance = max(abs(float(volatility_weight)), 1e-6) * 0.0005
+    except (TypeError, ValueError):
+        tolerance = 0.0005
+    normalized_macro = (macro_trend or "").upper()
+    direction_matches = (
+        cumulative_delta > 0 and normalized_macro in {"UP", "UP_CONFIRMED"}
+    ) or (
+        cumulative_delta < 0 and normalized_macro in {"DOWN", "DOWN_CONFIRMED"}
+    )
+
+    if volume_ratio >= 1.5 and direction_matches and delta_ratio >= tolerance * 2.5:
+        return f"KING_OF_{suit}"
+    if volume_ratio >= 1.5 and direction_matches and delta_ratio >= tolerance:
+        return f"KNIGHT_OF_{suit}"
+    if volume_ratio >= 1.2 and direction_matches and delta_ratio <= tolerance:
+        return f"QUEEN_OF_{suit}"
+    if volume_ratio >= 1.5 and not direction_matches:
+        return f"PAGE_OF_{suit}"
+    return current_minor_card
+
+
 def get_archetype_parameters(element: str, card_name: str) -> dict[str, float]:
     """Return volatility-sensitive thresholds for a Major Arcana archetype."""
     parameters: dict[str, float] = {

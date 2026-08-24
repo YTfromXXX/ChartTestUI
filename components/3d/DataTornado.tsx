@@ -14,6 +14,7 @@ const TornadoMaterial = shaderMaterial(
     uTime: 0,
     uSpeed: 1.0,      // S15のボリューム（出来高）に連動
     uPressure: 0.0,   // S15のデルタ（売り/買い圧力）に連動
+    uKnotType: 0.0,
     uColor1: new THREE.Color('#ef4444'), // ベースカラー（五行）
     uColor2: new THREE.Color('#eab308'), // 発光カラー
   },
@@ -22,6 +23,7 @@ const TornadoMaterial = shaderMaterial(
     uniform float uTime;
     uniform float uSpeed;
     uniform float uPressure;
+    uniform float uKnotType;
     varying vec2 vUv;
     varying float vElevation;
 
@@ -39,10 +41,35 @@ const TornadoMaterial = shaderMaterial(
       // 中心からの距離と角度
       float radius = length(pos.xz);
       float angle = atan(pos.z, pos.x);
+      float particleSeed = random(position.xy + position.z);
+      float heightRatio = clamp((pos.y + 10.0) / 20.0, 0.0, 1.0);
 
       // Y軸（高さ）に応じた回転のねじれ ＋ S15スピード
       float twist = pos.y * 0.5;
       angle += uTime * uSpeed + twist;
+
+      if (uKnotType > 0.5 && uKnotType < 1.5) {
+        float burst = smoothstep(0.78, 1.0, particleSeed) * (0.8 + 0.7 * sin(uTime * 3.1 + particleSeed * 40.0));
+        radius *= 0.72 + 0.32 * sin(uTime * 2.4 + particleSeed * 18.0) + burst;
+        angle += sin(uTime * 5.0 + particleSeed * 31.0) * (0.25 + burst);
+      } else if (uKnotType > 1.5 && uKnotType < 2.5) {
+        float strand = step(0.5, particleSeed);
+        float helixAngle = heightRatio * 12.5664 + uTime * uSpeed * 0.65 + strand * 3.14159;
+        radius = 2.35 + sin(uTime * 1.2 + particleSeed * 9.0) * 0.12;
+        angle = helixAngle;
+        pos.y = (heightRatio - 0.5) * 20.0 + sin(uTime * 0.8 + particleSeed * 20.0) * 0.18;
+      } else if (uKnotType > 2.5 && uKnotType < 3.5) {
+        float sphereRadius = pow(particleSeed, 0.55) * 2.65;
+        float sphereAngle = particleSeed * 37.0 + uTime * 0.18;
+        radius = sphereRadius * sqrt(max(0.02, 1.0 - heightRatio * 0.72));
+        angle = sphereAngle + heightRatio * 6.28318;
+        pos.y = (heightRatio - 0.5) * 5.3;
+      } else if (uKnotType > 3.5) {
+        float fall = uTime * (1.2 + particleSeed * 2.8);
+        pos.y -= fall * fall * 0.22;
+        radius *= 0.82 + particleSeed * 0.55;
+        angle += particleSeed * 8.0 + uTime * 0.25;
+      }
 
       // 新しいXZ座標（回転適用）
       pos.x = cos(angle) * radius;
@@ -101,9 +128,17 @@ interface DataTornadoProps {
   s15Volume: number; // 例: 100 ~ 1000
   s15Delta: number;  // 例: -50.0 ~ 50.0
   wuxingPhase: string;
+  knotType: string;
 }
 
-export default function DataTornado({ s15Volume, s15Delta, wuxingPhase }: DataTornadoProps) {
+const KNOT_MODES: Record<string, number> = {
+  '投げ縄結び': 1,
+  'らせん結び': 2,
+  'タークス・ヘッド': 3,
+  '巻き結び（崩壊）': 4,
+};
+
+export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType }: DataTornadoProps) {
   const materialRef = useRef<any>(null);
   const PARTICLE_COUNT = 30000; // 3万個のデータストリーム
 
@@ -145,6 +180,7 @@ export default function DataTornado({ s15Volume, s15Delta, wuxingPhase }: DataTo
 
       materialRef.current.uSpeed = THREE.MathUtils.lerp(materialRef.current.uSpeed, targetSpeed, 0.05);
       materialRef.current.uPressure = THREE.MathUtils.lerp(materialRef.current.uPressure, targetPressure, 0.05);
+      materialRef.current.uKnotType = THREE.MathUtils.lerp(materialRef.current.uKnotType, KNOT_MODES[knotType] ?? 0, 0.08);
     }
   });
 
@@ -163,6 +199,7 @@ export default function DataTornado({ s15Volume, s15Delta, wuxingPhase }: DataTo
         ref={materialRef}
         uColor1={new THREE.Color(colors.c1)}
         uColor2={new THREE.Color(colors.c2)}
+        uKnotType={KNOT_MODES[knotType] ?? 0}
         transparent
         depthWrite={false}
         blending={THREE.AdditiveBlending} // パーティクルが重なると白く発光する

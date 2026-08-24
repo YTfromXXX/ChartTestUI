@@ -9,6 +9,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from config.archetype_matrix import ARCHETYPE_MATRIX
+
 try:
     import MetaTrader5 as mt5
 except ImportError:
@@ -54,11 +56,27 @@ UNIFIED_SYMBOLS: dict[int, dict[str, str]] = {
 _COMMON_COLUMNS = ["time", "open", "high", "low", "close", "volume"]
 _CRYPTO_IDS = {
     "DOGE": "dogecoin",
+    "DOGEUSD": "dogecoin",
     "BTCUSD": "bitcoin",
+    "AVAXUSD": "avalanche-2",
     "ETH": "ethereum",
+    "ETHUSD": "ethereum",
     "PEPE": "pepe",
+    "PEPEUSD": "pepe",
+    "SHIBUSD": "shiba-inu",
     "SOL": "solana",
+    "SOLUSD": "solana",
+    "MATICUSD": "matic-network",
+    "LINKUSD": "chainlink",
     "ADA": "cardano",
+    "ADAUSD": "cardano",
+    "LTCUSD": "litecoin",
+    "XRPUSD": "ripple",
+    "USDTUSD": "tether",
+    "USDC": "usd-coin",
+    "USDCUSD": "usd-coin",
+    "LUNAUSD": "terra-luna-2",
+    "APTUSD": "aptos",
 }
 _FOREX_YF_TICKERS = {
     "EURUSD": "EURUSD=X",
@@ -68,6 +86,19 @@ _FOREX_YF_TICKERS = {
     "USDCHF": "CHF=X",
     "USDCAD": "CAD=X",
 }
+_MT5_SYMBOLS = {"XAUUSD", "US500", "USDJPY", "XAGUSD", "DAX40", "GER40", "BTCXAU"}
+_STOCK_SYMBOLS = {"AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "SPY", "VIX"}
+
+
+def _source_for_symbol(symbol: str) -> str:
+    """Infer a provider for matrix candidates that only carry a symbol name."""
+    if symbol in _MT5_SYMBOLS:
+        return "mt5"
+    if symbol in _STOCK_SYMBOLS:
+        return "stock"
+    if symbol in _FOREX_YF_TICKERS:
+        return "forex"
+    return "crypto"
 
 
 def _empty_or_normalize(frame: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -180,3 +211,64 @@ async def fetch_unified_market_data(
     if timeframe != "7m":
         logger.info("timeframe=%s requested; returning normalized provider data near 7m.", timeframe)
     return frame.tail(limit).reset_index(drop=True)
+
+
+class TarotMatrixManager:
+    """Keep one healthy active market assigned to every Major Arcana slot."""
+
+    def __init__(self, matrix: dict[int, dict[str, Any]] | None = None, refresh_seconds: float = 30.0):
+        self.matrix = matrix or ARCHETYPE_MATRIX
+        self.refresh_seconds = max(refresh_seconds, 1.0)
+        self.active_symbols: dict[int, dict[str, Any]] = {}
+        self.last_refresh: float = 0.0
+        self._lock = asyncio.Lock()
+
+    async def refresh_active_symbols(self, force: bool = False) -> dict[int, dict[str, Any]]:
+        """Probe each candidate pool in order and retain the first healthy candidate."""
+        now = asyncio.get_running_loop().time()
+        if not force and now - self.last_refresh < self.refresh_seconds:
+            return self.active_symbols.copy()
+
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            if not force and now - self.last_refresh < self.refresh_seconds:
+                return self.active_symbols.copy()
+            used_symbols: set[str] = set()
+            for arcana_number, archetype in self.matrix.items():
+                assigned = None
+                for candidate in archetype["symbol_pool"]:
+                    if candidate in used_symbols:
+                        logger.debug("Skipping already assigned symbol %s for Arcana %s", candidate, arcana_number)
+                        continue
+                    symbol_info = {
+                        "symbol": candidate,
+                        "source": _source_for_symbol(candidate),
+                        "name": candidate,
+                    }
+                    try:
+                        frame = await fetch_unified_market_data(symbol_info, limit=2)
+                    except Exception as exc:
+                        logger.warning("Health check failed for %s: %s", candidate, exc)
+                        frame = None
+                    if frame is not None and not frame.empty:
+                        assigned = {**archetype, "active_symbol": candidate, "source": symbol_info["source"]}
+                        used_symbols.add(candidate)
+                        break
+
+                if assigned is not None:
+                    self.active_symbols[arcana_number] = assigned
+                elif arcana_number in self.active_symbols:
+                    previous_symbol = self.active_symbols[arcana_number].get("active_symbol")
+                    if previous_symbol not in used_symbols:
+                        used_symbols.add(previous_symbol)
+                        logger.warning("Keeping previous active symbol for Arcana %s", arcana_number)
+                    else:
+                        logger.error("No unique healthy candidate available for Arcana %s", arcana_number)
+                else:
+                    logger.error("No healthy candidate available for Arcana %s", arcana_number)
+            self.last_refresh = now
+            return self.active_symbols.copy()
+
+    def active_assignments(self) -> dict[int, dict[str, Any]]:
+        """Return the latest assignments without triggering network calls."""
+        return self.active_symbols.copy()

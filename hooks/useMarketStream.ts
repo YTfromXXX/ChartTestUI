@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 export interface MarketData {
   symbol: string;
   major_arcana: string;
+  knot_type?: string;
+  market_behavior?: string;
   minor_arcana?: string;
   wuxing_phase: string;
   hexagram_binary: string;
@@ -17,6 +19,14 @@ export interface MarketData {
   s15_volume: number;
   s15_delta: number;
   is_emperor_synchronized: boolean;
+  chart_data?: {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    sma20: number;
+  };
 }
 
 type PartialMarketData = Partial<MarketData> & {
@@ -38,6 +48,8 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
   return {
     symbol: resolvedSymbol,
     major_arcana: payload.major_arcana ?? '',
+    knot_type: payload.knot_type,
+    market_behavior: payload.market_behavior,
     minor_arcana: payload.minor_arcana,
     wuxing_phase: (payload.wuxing_phase ?? 'EARTH').toUpperCase(),
     hexagram_binary: /^[01]{6}$/.test(hexagram) ? hexagram : '000000',
@@ -49,6 +61,7 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
     s15_volume: payload.s15_volume ?? 0,
     s15_delta: payload.s15_delta ?? 0,
     is_emperor_synchronized: payload.is_emperor_synchronized ?? false,
+    chart_data: payload.chart_data,
   };
 }
 

@@ -15,13 +15,15 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from database.magic_ledger import MagicLedgerDB
+from market_aggregator import TarotMatrixManager
+
 from tarot_engine import (
     MAJOR_ARCANA_SYMBOLS,
     WATCHLIST_SYMBOLS,
     calculate_iching_weight,
     calculate_minor_arcana,
-    calculate_iching_weight,
-    evaluate_micro_distortion,
+    evaluate_court_promotion,
     evaluate_court_card,
 )
 
@@ -36,6 +38,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ChartTestUI API")
+matrix_manager = TarotMatrixManager()
+magic_ledger = MagicLedgerDB(os.getenv("MAGIC_LEDGER_DB", "magic_ledger.db"))
+matrix_refresh_task: asyncio.Task[None] | None = None
 
 
 def _cors_origins() -> list[str]:
@@ -60,6 +65,7 @@ MONITOR_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 MONITOR_CACHE_LOCK = threading.Lock()
 COINGECKO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 COINGECKO_CACHE_LOCK = threading.Lock()
+LAST_PROMOTED_CARDS: dict[str, str] = {}
 
 
 def _mt5_login_settings() -> tuple[int | None, str, str]:
@@ -101,12 +107,29 @@ def startup_mt5() -> None:
         return
 
     logger.info("MT5 terminal initialized for account %s on server %s.", login, server)
+    global matrix_refresh_task
+    matrix_refresh_task = asyncio.create_task(_matrix_refresh_loop())
+
+
+async def _matrix_refresh_loop() -> None:
+    """Refresh active candidates periodically while the MT5 session is alive."""
+    while True:
+        try:
+            await matrix_manager.refresh_active_symbols(force=True)
+            await asyncio.sleep(matrix_manager.refresh_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Tarot matrix refresh failed; retrying next interval.")
+            await asyncio.sleep(matrix_manager.refresh_seconds)
 
 
 @app.on_event("shutdown")
 def shutdown_mt5() -> None:
     """Release the MT5 terminal connection when the application stops."""
     if mt5 is not None:
+        if matrix_refresh_task is not None:
+            matrix_refresh_task.cancel()
         try:
             mt5.shutdown()
         except Exception:
@@ -302,7 +325,10 @@ def fetch_and_calculate_sync(symbol: str | None = None) -> dict[str, Any] | None
     all 22 symbols in one worker-thread batch. Results are cached briefly so the WebSocket
     loop does not repeatedly hit MT5 for unchanged M7 data.
     """
-    symbols = (symbol,) if symbol else MT5_SYMBOLS
+    assigned_symbols = tuple(
+        assignment["active_symbol"] for assignment in matrix_manager.active_assignments().values()
+    )
+    symbols = (symbol,) if symbol else assigned_symbols or MT5_SYMBOLS
     use_mt5 = mt5 is not None and os.getenv("USE_MT5", "true").strip().lower() in {"1", "true", "yes", "on"}
 
     try:
@@ -341,11 +367,34 @@ def fetch_and_calculate_sync(symbol: str | None = None) -> dict[str, Any] | None
                 iching = calculate_iching_weight(m7_frame, _element_for_symbol(current_symbol))
                 s15_frame.attrs["volatility_weight"] = iching["volatility_weight"]
                 macro_trend = "DOWN" if isinstance(minor_card, str) and minor_card.startswith("SWORDS_") else "UP" if isinstance(minor_card, str) and minor_card.startswith("WANDS_") else "NEUTRAL"
-                promoted = evaluate_micro_distortion(s15_frame, minor_card, macro_trend)
+                promoted = evaluate_court_promotion(
+                    s15_frame,
+                    minor_card or "",
+                    macro_trend,
+                    iching["volatility_weight"] or 1.0,
+                )
                 signal["minor_arcana"] = promoted or minor_card
-                signal["s15_delta"] = float(s15_frame["close"].iloc[-1] - s15_frame["open"].iloc[0]) if len(s15_frame) >= 4 else 0.0
+                signal["s15_delta"] = float(
+                    (s15_frame["close"].tail(4) - s15_frame["open"].tail(4)).sum()
+                ) if len(s15_frame) >= 4 else 0.0
                 signal["s15_volume"] = float(s15_frame["volume"].tail(4).sum())
                 signal["is_emperor_synchronized"] = signal["minor_arcana"].startswith("KING_") if isinstance(signal["minor_arcana"], str) else False
+                if (
+                    isinstance(promoted, str)
+                    and promoted.startswith(("KNIGHT_", "QUEEN_", "KING_"))
+                    and promoted != LAST_PROMOTED_CARDS.get(current_symbol)
+                ):
+                    ledger_result = magic_ledger.record_promotion_and_extract_mana({
+                        "symbol": current_symbol,
+                        "element": _element_for_symbol(current_symbol),
+                        "wuxing_phase": signal.get("wuxing_phase"),
+                        "hexagram": iching.get("hexagram_binary"),
+                        "promoted_card": promoted,
+                        "s15_volume": signal["s15_volume"],
+                        "s15_delta": signal["s15_delta"],
+                    })
+                    logger.info("Mana extraction: %s", ledger_result["incantation"])
+                    LAST_PROMOTED_CARDS[current_symbol] = promoted
             signals[current_symbol] = signal
         except Exception:
             logger.exception("Failed to fetch tick data for %s.", current_symbol)
@@ -419,11 +468,20 @@ def _tarot_screener_payload(symbol: str, signal: dict[str, Any]) -> dict[str, An
         macro_status = "NEUTRAL"
 
     promoted_card = evaluate_court_card(minor_card, micro_status, macro_status)
+    matrix_entry = next(
+        (entry for entry in matrix_manager.active_assignments().values() if entry.get("active_symbol") == symbol),
+        None,
+    ) or next(
+        (entry for entry in matrix_manager.matrix.values() if symbol in entry.get("symbol_pool", [])),
+        {},
+    )
     return {
         "event": "TAROT_SCREENER_UPDATE",
         "symbol": symbol,
         "major_arcana": _major_arcana_for_symbol(symbol),
         "minor_arcana": promoted_card,
+        "knot_type": matrix_entry.get("knot_type"),
+        "market_behavior": matrix_entry.get("market_behavior"),
         "tri_layer": {
             "macro": macro_status,
             "meso": minor_card,
