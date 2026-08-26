@@ -7,6 +7,7 @@ export type ManaPool = Partial<Record<ManaElement, number>>;
 
 type ManaMagicCircleProps = {
   manaPool: ManaPool;
+  onCastMagic: () => void;
 };
 
 const RINGS: Array<{ element: ManaElement; label: string; color: string }> = [
@@ -22,11 +23,20 @@ const RING_GAP = 11;
 const RING_RADIUS = 27;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-export default function ManaMagicCircle({ manaPool }: ManaMagicCircleProps) {
+export default function ManaMagicCircle({ manaPool, onCastMagic }: ManaMagicCircleProps) {
   const totalMana = RINGS.reduce((total, ring) => total + Math.max(0, manaPool[ring.element] ?? 0), 0);
+  const canCastMagic = totalMana > 100;
 
   return (
-    <aside className="fixed bottom-8 right-8 z-40 h-56 w-56 text-white" aria-label="Mana pool">
+    <motion.aside
+      className={`fixed bottom-8 right-8 z-40 h-56 w-56 text-white ${canCastMagic ? 'cursor-pointer' : 'cursor-default'}`}
+      aria-label="Mana pool"
+      onClick={canCastMagic ? onCastMagic : undefined}
+      animate={canCastMagic ? { scale: [1, 1.06, 1], filter: ['drop-shadow(0 0 0 rgba(250, 204, 21, 0))', 'drop-shadow(0 0 22px rgba(250, 204, 21, 0.95))', 'drop-shadow(0 0 0 rgba(250, 204, 21, 0))'] } : { scale: 1, filter: 'drop-shadow(0 0 0 rgba(250, 204, 21, 0))' }}
+      transition={canCastMagic ? { duration: 1.15, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.2 }}
+      whileHover={canCastMagic ? { scale: 1.1 } : undefined}
+      whileTap={canCastMagic ? { scale: 0.96 } : undefined}
+    >
       <div className="absolute inset-0 rounded-full bg-black/40 shadow-[0_0_70px_rgba(57,210,255,0.14)] backdrop-blur-sm" />
       <svg viewBox="0 0 192 192" className="relative h-full w-full overflow-visible">
         <circle cx={VIEWBOX_CENTER} cy={VIEWBOX_CENTER} r="88" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="1 5" />
@@ -89,6 +99,6 @@ export default function ManaMagicCircle({ manaPool }: ManaMagicCircleProps) {
           </span>
         );
       })}
-    </aside>
+    </motion.aside>
   );
 }

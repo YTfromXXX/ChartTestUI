@@ -6,3 +6,6 @@ requests
 yfinance
 ccxt
 MetaTrader5
+bcrypt
+python-jose[cryptography]
+python-multipart

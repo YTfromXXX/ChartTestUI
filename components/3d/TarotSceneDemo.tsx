@@ -1,11 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ManaMagicCircle from '../ManaMagicCircle';
 import TarotScene from './TarotScene';
 
 export default function TarotSceneDemo() {
   const [isSynchronized, setIsSynchronized] = useState(false);
+  const [isOverdrive, setIsOverdrive] = useState(false);
+  const overdriveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (overdriveTimerRef.current !== null) window.clearTimeout(overdriveTimerRef.current);
+  }, []);
+
+  const handleCastMagic = async () => {
+    setIsOverdrive(true);
+    if (overdriveTimerRef.current !== null) window.clearTimeout(overdriveTimerRef.current);
+    overdriveTimerRef.current = window.setTimeout(() => setIsOverdrive(false), 3000);
+
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+    const token = window.sessionStorage.getItem('charttestui-access-token');
+    await fetch(`${apiBaseUrl}/api/cast_magic`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ element: 'FIRE', mana_cost: 100, target_symbol: 'BTCUSD' }),
+    }).catch(() => undefined);
+  };
 
   return (
     <section className="bg-[#090b0f] px-4 pb-10 sm:px-8 lg:px-12">
@@ -32,11 +55,12 @@ export default function TarotSceneDemo() {
             isEmperorSynchronized: isSynchronized,
             s15Volume: isSynchronized ? 900 : 280,
             s15Delta: isSynchronized ? -70 : -12,
+            isOverdrive,
             hexagramBinary: isSynchronized ? '101100' : '010101',
           }}
         />
       </div>
-      <ManaMagicCircle manaPool={{ FIRE: isSynchronized ? 820 : 240, WATER: 430, AIR: 610, EARTH: 290, METAL: 540 }} />
+      <ManaMagicCircle manaPool={{ FIRE: isSynchronized ? 820 : 240, WATER: 430, AIR: 610, EARTH: 290, METAL: 540 }} onCastMagic={handleCastMagic} />
     </section>
   );
 }

@@ -129,6 +129,7 @@ interface DataTornadoProps {
   s15Delta: number;  // 例: -50.0 ~ 50.0
   wuxingPhase: string;
   knotType: string;
+  isOverdrive: boolean;
 }
 
 const KNOT_MODES: Record<string, number> = {
@@ -138,7 +139,7 @@ const KNOT_MODES: Record<string, number> = {
   '巻き結び（崩壊）': 4,
 };
 
-export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType }: DataTornadoProps) {
+export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType, isOverdrive }: DataTornadoProps) {
   const materialRef = useRef<any>(null);
   const PARTICLE_COUNT = 30000; // 3万個のデータストリーム
 
@@ -175,12 +176,14 @@ export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType
       materialRef.current.uTime += delta;
 
       // S15のデータをGPU(シェーダー)のuniformへスムーズに渡す（Lerp）
-      const targetSpeed = Math.max(0.2, s15Volume / 200.0);
+      const targetSpeed = Math.max(0.2, s15Volume / 200.0) * (isOverdrive ? 8 : 1);
       const targetPressure = s15Delta / 100.0; // マイナスなら下降、プラスなら上昇
 
       materialRef.current.uSpeed = THREE.MathUtils.lerp(materialRef.current.uSpeed, targetSpeed, 0.05);
       materialRef.current.uPressure = THREE.MathUtils.lerp(materialRef.current.uPressure, targetPressure, 0.05);
       materialRef.current.uKnotType = THREE.MathUtils.lerp(materialRef.current.uKnotType, KNOT_MODES[knotType] ?? 0, 0.08);
+      materialRef.current.uColor1.set(isOverdrive ? '#facc15' : colors.c1);
+      materialRef.current.uColor2.set(isOverdrive ? '#fff7ae' : colors.c2);
     }
   });
 

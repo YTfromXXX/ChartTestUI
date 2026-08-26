@@ -17,6 +17,7 @@ type TarotSceneData = {
   isEmperorSynchronized: boolean;
   s15Volume: number;
   s15Delta: number;
+  isOverdrive?: boolean;
   hexagramBinary?: string;
 };
 
@@ -67,7 +68,7 @@ export default function TarotScene({ data, className }: TarotSceneProps) {
         <TarotCard3D data={data} />
         <group position={[0.25, 0, 0]}>
           <HexagramTemple hexagramBinary={data.hexagramBinary ?? '101100'} />
-          <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} />
+          <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} isOverdrive={data.isOverdrive ?? false} />
         </group>
         <Environment preset="night" />
       </Canvas>

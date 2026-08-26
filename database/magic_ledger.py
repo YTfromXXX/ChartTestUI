@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import sqlite3
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,20 @@ class MagicLedgerDB:
                 CREATE TABLE IF NOT EXISTS mana_pool (
                     element TEXT PRIMARY KEY,
                     current_mana INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS magic_casts (
+                    cast_id TEXT PRIMARY KEY,
+                    element TEXT NOT NULL,
+                    mana_cost INTEGER NOT NULL,
+                    target_symbol TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
                 )
                 """
             )
@@ -105,3 +120,89 @@ class MagicLedgerDB:
             "incantation": incantation,
             "message": incantation,
         }
+
+    def consume_mana(self, element: str, mana_cost: int) -> int | None:
+        """Atomically consume mana and return the remaining balance, if affordable."""
+        normalized_element = str(element).strip().upper()
+        if normalized_element not in self.ELEMENTS:
+            raise ValueError(f"element must be one of {', '.join(self.ELEMENTS)}")
+        if mana_cost <= 0:
+            raise ValueError("mana_cost must be greater than zero")
+
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE mana_pool
+                SET current_mana = current_mana - ?
+                WHERE element = ? AND current_mana >= ?
+                """,
+                (mana_cost, normalized_element, mana_cost),
+            ).rowcount
+            if updated == 0:
+                return None
+
+            remaining = connection.execute(
+                "SELECT current_mana FROM mana_pool WHERE element = ?",
+                (normalized_element,),
+            ).fetchone()
+
+        return int(remaining["current_mana"])
+
+    def begin_cast(self, element: str, mana_cost: int, target_symbol: str, message: str) -> tuple[str, int] | None:
+        """Reserve mana and persist a PENDING cast in one transaction."""
+        normalized_element = str(element).strip().upper()
+        if normalized_element not in self.ELEMENTS:
+            raise ValueError(f"element must be one of {', '.join(self.ELEMENTS)}")
+        if mana_cost <= 0:
+            raise ValueError("mana_cost must be greater than zero")
+        cast_id = str(uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE mana_pool SET current_mana = current_mana - ? WHERE element = ? AND current_mana >= ?",
+                (mana_cost, normalized_element, mana_cost),
+            ).rowcount
+            if updated == 0:
+                return None
+            remaining = connection.execute(
+                "SELECT current_mana FROM mana_pool WHERE element = ?", (normalized_element,)
+            ).fetchone()["current_mana"]
+            connection.execute(
+                "INSERT INTO magic_casts (cast_id, element, mana_cost, target_symbol, message, status, created_at) VALUES (?, ?, ?, ?, ?, 'PENDING', ?)",
+                (cast_id, normalized_element, mana_cost, target_symbol, message, timestamp),
+            )
+        return cast_id, int(remaining)
+
+    def complete_cast(self, cast_id: str, status: str) -> None:
+        """Mark a pending cast as SUCCESS or FAILED."""
+        if status not in {"SUCCESS", "FAILED"}:
+            raise ValueError("status must be SUCCESS or FAILED")
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE magic_casts SET status = ?, completed_at = ? WHERE cast_id = ? AND status = 'PENDING'",
+                (status, datetime.now(timezone.utc).isoformat(), cast_id),
+            ).rowcount
+            if updated != 1:
+                raise ValueError("cast is missing or already completed")
+
+    def rollback_cast(self, cast_id: str) -> int:
+        """Return reserved mana and mark a pending cast FAILED atomically."""
+        with self._connect() as connection:
+            cast = connection.execute(
+                "SELECT element, mana_cost FROM magic_casts WHERE cast_id = ? AND status = 'PENDING'",
+                (cast_id,),
+            ).fetchone()
+            if cast is None:
+                raise ValueError("cast is missing or already completed")
+            connection.execute(
+                "UPDATE mana_pool SET current_mana = current_mana + ? WHERE element = ?",
+                (cast["mana_cost"], cast["element"]),
+            )
+            connection.execute(
+                "UPDATE magic_casts SET status = 'FAILED', completed_at = ? WHERE cast_id = ?",
+                (datetime.now(timezone.utc).isoformat(), cast_id),
+            )
+            remaining = connection.execute(
+                "SELECT current_mana FROM mana_pool WHERE element = ?", (cast["element"],)
+            ).fetchone()["current_mana"]
+        return int(remaining)

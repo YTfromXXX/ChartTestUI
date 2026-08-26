@@ -12,11 +12,15 @@ from typing import Any
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, Field
 
+from auth import authenticate_user, get_current_user, issue_token
 from database.magic_ledger import MagicLedgerDB
 from market_aggregator import TarotMatrixManager
+from mt5_executor import MT5Executor
 
 from tarot_engine import (
     MAJOR_ARCANA_SYMBOLS,
@@ -40,6 +44,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="ChartTestUI API")
 matrix_manager = TarotMatrixManager()
 magic_ledger = MagicLedgerDB(os.getenv("MAGIC_LEDGER_DB", "magic_ledger.db"))
+mt5_executor = MT5Executor()
 matrix_refresh_task: asyncio.Task[None] | None = None
 
 
@@ -66,6 +71,24 @@ MONITOR_CACHE_LOCK = threading.Lock()
 COINGECKO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 COINGECKO_CACHE_LOCK = threading.Lock()
 LAST_PROMOTED_CARDS: dict[str, str] = {}
+
+
+class MagicCastRequest(BaseModel):
+    """Request payload for spending elemental mana on a market intervention."""
+
+    element: str = Field(min_length=1)
+    mana_cost: int = Field(gt=0)
+    target_symbol: str = Field(min_length=1)
+
+
+async def execute_trade(symbol: str, action: str) -> None:
+    """Placeholder for the asynchronous broker integration."""
+    await asyncio.to_thread(mt5_executor.execute, symbol, action)
+
+
+async def post_to_sns(message: str) -> None:
+    """Placeholder for the asynchronous SNS integration."""
+    print(f"[CAST MAGIC] post_to_sns message={message}")
 
 
 def _mt5_login_settings() -> tuple[int | None, str, str]:
@@ -495,6 +518,66 @@ def _tarot_screener_payload(symbol: str, signal: dict[str, Any]) -> dict[str, An
 def health_check() -> dict[str, str]:
     """Return a lightweight application health response."""
     return {"status": "ok"}
+
+
+@app.post("/api/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()) -> dict[str, str]:
+    """Issue a short-lived JWT for the configured observer account."""
+    try:
+        valid = authenticate_user(form_data.username, form_data.password)
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        token = issue_token(form_data.username)
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/api/cast_magic")
+async def cast_magic(request: MagicCastRequest, current_user: str = Depends(get_current_user)) -> dict[str, Any]:
+    """Consume elemental mana, then trigger the trade and story integrations."""
+    element = request.element.strip().upper()
+    target_symbol = request.target_symbol.strip().upper()
+    if not target_symbol:
+        raise HTTPException(status_code=400, detail="target_symbol is required.")
+
+    message = (
+        f"【魔力解放】観測者が{request.mana_cost}の{element} Manaを消費。"
+        f"{target_symbol}の乱気流へ介入し、KING_OF_WANDSの加護のもと"
+        "ロングエントリーを執行します。"
+    )
+    try:
+        cast_result = magic_ledger.begin_cast(element, request.mana_cost, target_symbol, message)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    if cast_result is None:
+        raise HTTPException(status_code=400, detail="Insufficient mana for this cast.")
+
+    cast_id, remaining_mana = cast_result
+    try:
+        await asyncio.gather(execute_trade(target_symbol, "LONG"), post_to_sns(message))
+    except Exception as error:
+        magic_ledger.rollback_cast(cast_id)
+        logger.exception("Cast %s failed for user %s; mana returned.", cast_id, current_user)
+        raise HTTPException(status_code=502, detail="External cast execution failed; mana returned.") from error
+
+    magic_ledger.complete_cast(cast_id, "SUCCESS")
+
+    return {
+        "status": "success",
+        "consumed_mana": request.mana_cost,
+        "message": message,
+        "remaining_mana": remaining_mana,
+        "cast_id": cast_id,
+    }
 
 
 @app.websocket("/ws/signals")
