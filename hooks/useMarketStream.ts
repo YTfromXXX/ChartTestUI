@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
 
 export interface MarketData {
   symbol: string;
@@ -19,6 +20,11 @@ export interface MarketData {
   s15_volume: number;
   s15_delta: number;
   is_emperor_synchronized: boolean;
+  rsi_tension?: number;
+  tarot_attribute?: { element: string; polarity: string };
+  elastic_energy?: number;
+  volume_mass?: number;
+  physics_event?: 'knot_burst' | 'stable';
   chart_data?: {
     time: number;
     open: number;
@@ -61,6 +67,11 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
     s15_volume: payload.s15_volume ?? 0,
     s15_delta: payload.s15_delta ?? 0,
     is_emperor_synchronized: payload.is_emperor_synchronized ?? false,
+    rsi_tension: payload.rsi_tension,
+    tarot_attribute: payload.tarot_attribute,
+    elastic_energy: payload.elastic_energy,
+    volume_mass: payload.volume_mass,
+    physics_event: payload.event === 'knot_burst' || payload.event === 'stable' ? payload.event : undefined,
     chart_data: payload.chart_data,
   };
 }
@@ -76,9 +87,12 @@ function parsePayload(payload: PartialMarketData): MarketData[] {
   return normalized ? [normalized] : [];
 }
 
-export function useMarketStream(url: string) {
+export function useMarketStream(url: string, symbol?: string) {
+  const { data: session } = useSession();
   const [marketDataMap, setMarketDataMap] = useState<Record<string, MarketData>>({});
   const [isConnected, setIsConnected] = useState(false);
+  const [burstEvent, setBurstEvent] = useState(false);
+  const [burstId, setBurstId] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stoppedRef = useRef(false);
@@ -86,6 +100,7 @@ export function useMarketStream(url: string) {
   useEffect(() => {
     stoppedRef.current = false;
     let reconnectDelay = 1000;
+    let burstResetTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const clearReconnect = () => {
       if (reconnectTimeoutRef.current) {
@@ -102,6 +117,13 @@ export function useMarketStream(url: string) {
       ws.onopen = () => {
         reconnectDelay = 1000;
         setIsConnected(true);
+        if (symbol) {
+          ws.send(JSON.stringify({
+            action: 'subscribe',
+            symbol: symbol.toUpperCase(),
+            is_authenticated: Boolean(session),
+          }));
+        }
       };
       ws.onmessage = (event) => {
         try {
@@ -112,6 +134,12 @@ export function useMarketStream(url: string) {
               updates.forEach((update) => { next[update.symbol] = update; });
               return next;
             });
+            if (updates.some((update) => update.physics_event === 'knot_burst')) {
+              setBurstId((current) => current + 1);
+              setBurstEvent(true);
+              if (burstResetTimeout) clearTimeout(burstResetTimeout);
+              burstResetTimeout = setTimeout(() => setBurstEvent(false), 140);
+            }
           }
         } catch (error) {
           console.error('[Market Stream] Parse error:', error);
@@ -132,11 +160,12 @@ export function useMarketStream(url: string) {
     return () => {
       stoppedRef.current = true;
       clearReconnect();
+      if (burstResetTimeout) clearTimeout(burstResetTimeout);
       wsRef.current?.close();
       wsRef.current = null;
       setIsConnected(false);
     };
-  }, [url]);
+  }, [url, symbol, session]);
 
-  return { marketDataMap, isConnected };
+  return { marketDataMap, isConnected, burstEvent, burstId };
 }

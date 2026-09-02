@@ -8,6 +8,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import CameraController from './CameraController';
 import DataTornado from './DataTornado';
 import HexagramTemple from './HexagramTemple';
+import KnotFireworks from './KnotFireworks';
 
 type TarotSceneData = {
   cardName: string;
@@ -19,6 +20,9 @@ type TarotSceneData = {
   s15Delta: number;
   isOverdrive?: boolean;
   hexagramBinary?: string;
+  elasticEnergy?: number;
+  burstId?: number;
+  tarotColor?: string;
 };
 
 type TarotSceneProps = {
@@ -69,6 +73,7 @@ export default function TarotScene({ data, className }: TarotSceneProps) {
         <group position={[0.25, 0, 0]}>
           <HexagramTemple hexagramBinary={data.hexagramBinary ?? '101100'} />
           <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} isOverdrive={data.isOverdrive ?? false} />
+          <KnotFireworks burstPosition={knotCenter} energy={data.elasticEnergy ?? 0} tarotColor={data.tarotColor ?? '#e0ff00'} burstId={data.burstId ?? 0} />
         </group>
         <Environment preset="night" />
       </Canvas>

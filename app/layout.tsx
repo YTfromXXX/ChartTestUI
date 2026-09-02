@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import AuthSessionProvider from "@/components/AuthSessionProvider";
 import "./globals.css";
 
 const display = Space_Grotesk({ subsets: ["latin"], variable: "--font-space-grotesk" });
@@ -11,5 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className={`${display.variable} ${mono.variable}`}>{children}</body></html>;
+  return <html lang="en"><body className={`${display.variable} ${mono.variable}`}><AuthSessionProvider>{children}</AuthSessionProvider></body></html>;
 }

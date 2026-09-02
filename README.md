@@ -55,3 +55,22 @@ For local testing, `BACKEND_CORS_ORIGINS=*` is accepted. The frontend uses the l
 `chart_data`, `wuxing_phase`, and status fields from the WebSocket to render the command
 center and M7 chart. When MT5 is unavailable, the backend falls back to CoinGecko with a
 cache interval controlled by `COINGECKO_CACHE_SECONDS`.
+
+## Auth.js and Symbol Streams
+
+Auth.js is exposed at `/api/auth/[...nextauth]` with a JWT session and two Credentials
+providers: `observer-credentials` delegates validation to FastAPI `/api/token`, while
+`siwe` is a deliberate SIWE placeholder for nonce storage and signature verification.
+Set `AUTH_SECRET` for production and `API_URL` when the Next.js server cannot reach the
+backend at `http://localhost:8000`. Guests can still view charts; authenticated sessions
+enable the advanced analysis state in `TarotSceneDemo` through `useSession`.
+
+The live-symbol hook sends this message immediately after opening the socket:
+
+```json
+{"symbol":"DOGE-USD"}
+```
+
+Subscribed clients receive one `KNOT_UPDATE` JSON payload per second containing
+`rsi_tension`, `tarot_attribute`, 15-second values, and `chart_data`. Clients that do not
+send a subscription message retain the existing multi-symbol screener behavior.

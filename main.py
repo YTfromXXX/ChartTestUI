@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import random
 import threading
 import time
 from typing import Any
@@ -71,6 +73,41 @@ MONITOR_CACHE_LOCK = threading.Lock()
 COINGECKO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 COINGECKO_CACHE_LOCK = threading.Lock()
 LAST_PROMOTED_CARDS: dict[str, str] = {}
+
+
+def _dummy_knot_payload(symbol: str) -> dict[str, Any]:
+    """Create a lightweight one-second demo payload for a subscribed symbol."""
+    price = 100.0 + random.uniform(-2.0, 2.0)
+    delta = random.uniform(-1.0, 1.0)
+    rsi = random.uniform(10.0, 90.0)
+    physics = calculate_physics_parameters(rsi, random.uniform(100.0, 1000.0))
+    return {
+        "event": "KNOT_UPDATE", "symbol": symbol,
+        "major_arcana": "0_THE_FOOL" if symbol.startswith("DOGE") else "4_THE_EMPEROR",
+        "knot_type": "らせん結び", "market_behavior": "VOLATILE_DRIFT",
+        "wuxing_phase": random.choice(["FIRE", "WATER", "WOOD", "EARTH", "METAL"]),
+        "rsi_tension": physics["rsi_tension"], "volume_mass": physics["volume_mass"],
+        "elastic_energy": physics["elastic_energy"], "event": physics["event"],
+        "tarot_attribute": {"element": "FIRE", "polarity": "dynamic"},
+        "hexagram_binary": format(random.randrange(64), "06b"),
+        "tri_layer": {"macro": "TRENDING", "meso": "KNOT_FORMED", "micro": "PRESSURE"},
+        "s15_volume": round(random.uniform(100.0, 1000.0), 2),
+        "s15_delta": round(delta, 4), "is_emperor_synchronized": abs(delta) > 0.8,
+        "chart_data": {"time": int(time.time()), "open": price - delta, "high": price + 0.5, "low": price - 0.5, "close": price, "sma20": price - 0.1},
+    }
+
+
+def calculate_physics_parameters(rsi: float, volume_weight: float) -> dict[str, Any]:
+    """Calculate tension and elastic energy for a market knot."""
+    tension = abs(rsi - 50.0)
+    elastic_energy = 0.5 * volume_weight * math.pow(tension, 2)
+    is_burst = (rsi > 85.0 or rsi < 15.0) and elastic_energy > 5000.0
+    return {
+        "rsi_tension": round(tension, 4),
+        "volume_mass": round(volume_weight, 4),
+        "elastic_energy": round(elastic_energy, 4),
+        "event": "knot_burst" if is_burst else "stable",
+    }
 
 
 class MagicCastRequest(BaseModel):
@@ -582,9 +619,19 @@ async def cast_magic(request: MagicCastRequest, current_user: str = Depends(get_
 
 @app.websocket("/ws/signals")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Stream one Tarot screener update per watched symbol every five seconds."""
+    """Stream legacy screener data or one-second demo data for a subscribed symbol."""
     await websocket.accept()
     try:
+        try:
+            request = await asyncio.wait_for(websocket.receive_json(), timeout=0.05)
+        except asyncio.TimeoutError:
+            request = None
+        subscribed_symbol = str(request.get("symbol", "")).strip().upper() if isinstance(request, dict) and request.get("action", "subscribe") == "subscribe" else ""
+        if subscribed_symbol:
+            while True:
+                await websocket.send_json(_dummy_knot_payload(subscribed_symbol))
+                await asyncio.sleep(1.0)
+
         while True:
             result = await asyncio.to_thread(fetch_and_calculate_sync)
             if result is not None:

@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import ManaMagicCircle from '../ManaMagicCircle';
 import TarotScene from './TarotScene';
 
 export default function TarotSceneDemo() {
+  const { status } = useSession();
+  const isAdvancedAnalysisEnabled = status === 'authenticated';
   const [isSynchronized, setIsSynchronized] = useState(false);
   const [isOverdrive, setIsOverdrive] = useState(false);
   const overdriveTimerRef = useRef<number | null>(null);
@@ -46,6 +49,7 @@ export default function TarotSceneDemo() {
             {isSynchronized ? 'Release deep dive' : 'Trigger Emperor sync'}
           </button>
         </div>
+        {isAdvancedAnalysisEnabled && <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.2em] text-fuchsia-200">Advanced spectral analysis / active</p>}
         <TarotScene
           data={{
             cardName: 'THE EMPEROR',
@@ -55,7 +59,7 @@ export default function TarotSceneDemo() {
             isEmperorSynchronized: isSynchronized,
             s15Volume: isSynchronized ? 900 : 280,
             s15Delta: isSynchronized ? -70 : -12,
-            isOverdrive,
+            isOverdrive: isOverdrive && isAdvancedAnalysisEnabled,
             hexagramBinary: isSynchronized ? '101100' : '010101',
           }}
         />

@@ -3,6 +3,7 @@
 import { ArrowRight, KeyRound, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { signIn } from "next-auth/react";
 import TarotCommandCenter from "@/components/TarotCommandCenter";
 import TarotSceneDemo from "@/components/3d/TarotSceneDemo";
 
@@ -40,6 +41,8 @@ export default function Home() {
       });
       if (!response.ok) throw new Error("Authentication failed");
       const token = await response.json() as { access_token: string };
+      const sessionResult = await signIn("observer-credentials", { email, password, redirect: false });
+      if (sessionResult?.error) throw new Error("Auth.js session could not be created");
       window.sessionStorage.setItem("charttestui-authenticated", "true");
       window.sessionStorage.setItem("charttestui-access-token", token.access_token);
       router.push("/gallery");
@@ -52,13 +55,13 @@ export default function Home() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#090b0f]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(56,189,248,0.13),transparent_28%),radial-gradient(circle_at_80%_80%,rgba(245,158,11,0.1),transparent_28%),linear-gradient(145deg,#030712_0%,#111827_48%,#090b0f_100%)]" />
-      <div className={isAuthenticated ? "relative" : "relative opacity-35"}>
+      <div className="relative">
         <TarotCommandCenter />
         <TarotSceneDemo />
       </div>
 
-      {!isAuthenticated && <div className="absolute inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[3px]">
-        <section className="w-full max-w-md border border-cyan-200/20 bg-[#080d16]/95 p-6 text-stone-100 shadow-[0_0_80px_rgba(34,211,238,0.12)] sm:p-8" aria-labelledby="auth-title">
+      {!isAuthenticated && <div className="absolute bottom-4 right-4 z-20 w-[min(24rem,calc(100%-2rem))] p-2 sm:bottom-8 sm:right-8">
+        <section className="border border-cyan-200/20 bg-[#080d16]/95 p-6 text-stone-100 shadow-[0_0_80px_rgba(34,211,238,0.12)] sm:p-8" aria-labelledby="auth-title">
           <div className="mb-8 flex items-start justify-between">
             <div>
               <div className="mb-5 flex items-center gap-3 text-cyan-200"><LockKeyhole className="h-5 w-5" /><span className="font-mono text-[10px] uppercase tracking-[0.34em]">Secure observatory</span></div>

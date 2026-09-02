@@ -9,7 +9,7 @@ import { useMarketStream } from '@/hooks/useMarketStream';
 export default function LiveSymbolPage() {
   const params = useParams<{ symbol: string }>();
   const symbol = decodeURIComponent(params.symbol ?? '').toUpperCase();
-  const { marketDataMap, isConnected } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws/signals');
+  const { marketDataMap, isConnected, burstEvent, burstId } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws/signals', symbol);
   const data = marketDataMap[symbol];
 
   return (
@@ -31,6 +31,7 @@ export default function LiveSymbolPage() {
           <div className="border-l border-red-300/50 bg-white/[0.03] px-4 py-3"><p className="font-mono text-[9px] uppercase tracking-[0.22em] text-stone-600">Delta</p><p className="mt-1 text-sm text-red-200">{data ? data.s15_delta.toFixed(4) : '--'}</p></div>
         </div>
         <LiveChartView symbol={symbol} data={data} isConnected={isConnected} />
+        {burstEvent && <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.2em] text-fuchsia-200">Knot burst detected / elastic threshold exceeded</p>}
         <p className="mt-4 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-stone-600"><CircleDot className="h-3 w-3" /> Selected symbol stream / five-second refresh</p>
       </div>
     </main>
