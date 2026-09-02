@@ -73,7 +73,7 @@ export default function TarotScene({ data, className }: TarotSceneProps) {
         <group position={[0.25, 0, 0]}>
           <HexagramTemple hexagramBinary={data.hexagramBinary ?? '101100'} />
           <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} isOverdrive={data.isOverdrive ?? false} />
-          <KnotFireworks burstPosition={knotCenter} energy={data.elasticEnergy ?? 0} tarotColor={data.tarotColor ?? '#e0ff00'} burstId={data.burstId ?? 0} />
+          <KnotFireworks burstPosition={knotCenter} energy={data.elasticEnergy ?? 0} tarotColor={data.tarotColor ?? '#e0ff00'} active={Boolean(data.elasticEnergy)} />
         </group>
         <Environment preset="night" />
       </Canvas>

@@ -37,6 +37,7 @@ export interface MarketData {
 
 type PartialMarketData = Partial<MarketData> & {
   symbol?: string;
+  event?: 'knot_burst' | 'stable';
   status?: Partial<MarketData['tri_layer']>;
   tri_layer?: Partial<MarketData['tri_layer']>;
   data?: PartialMarketData;
