@@ -1,7 +1,11 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, Gem, Orbit, Shield } from "lucide-react";
+import {
+  Activity, BookOpen, Crown, Eye, Flame, Gauge, Gem, Globe2, HeartPulse, Library, Moon,
+  Orbit, Pause, RefreshCw, Scale, Search, Shield, Skull, Sparkles, Sprout, Stethoscope,
+  Sun, Zap, type LucideIcon,
+} from "lucide-react";
 import IChingHexagram from "@/components/IChingHexagram";
 
 export type WuxingPhase = "WATER" | "WOOD" | "FIRE" | "EARTH" | "METAL";
@@ -78,23 +82,52 @@ function glowWithOpacity(glow: string, opacity: number) {
   return glow.replace(/[^,]+\)$/u, `${opacity})`);
 }
 
-function Silhouette({ theme, knotFormed, microActive }: { theme: PhaseTheme; knotFormed: boolean; microActive: boolean }) {
+const arcanaIcons: Record<number, LucideIcon> = {
+  0: Sprout,
+  1: Sparkles,
+  2: Eye,
+  3: HeartPulse,
+  4: Shield,
+  5: Stethoscope,
+  6: Activity,
+  7: Gauge,
+  8: Flame,
+  9: Search,
+  10: RefreshCw,
+  11: Scale,
+  12: Pause,
+  13: Skull,
+  14: Library,
+  15: Zap,
+  16: Stethoscope,
+  17: Sparkles,
+  18: Moon,
+  19: Sun,
+  20: HeartPulse,
+  21: Globe2,
+};
+
+function Silhouette({ theme, knotFormed, microActive, cardName }: { theme: PhaseTheme; knotFormed: boolean; microActive: boolean; cardName: string }) {
+  const arcanaIndex = Number.parseInt(cardName, 10);
+  const ArcanaIcon = arcanaIcons[arcanaIndex] ?? Activity;
+
   return (
-    <div className="relative flex h-52 items-center justify-center overflow-hidden rounded-sm border border-white/10 bg-black/20">
+    <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-sm border border-white/10 bg-black/20 sm:h-44">
+      <div className="pointer-events-none absolute inset-x-4 top-1/2 h-px bg-white/10 shadow-[0_-18px_0_rgba(255,255,255,0.06),0_18px_0_rgba(255,255,255,0.06)]" />
+      <div className="pointer-events-none absolute inset-x-8 bottom-5 h-12 opacity-25 [clip-path:polygon(0_75%,14%_56%,26%_64%,39%_24%,53%_48%,66%_36%,80%_58%,100%_8%,100%_100%,0_100%)] bg-current" />
       <motion.div
-        className={`absolute h-44 w-44 rounded-full blur-3xl ${theme.halo}`}
+        className={`absolute h-36 w-36 rounded-full blur-3xl ${theme.halo}`}
         animate={{ scale: microActive ? [0.8, 1.1, 0.85] : 1, opacity: microActive ? [0.18, 0.4, 0.2] : 0.2 }}
         transition={{ duration: 2.1, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
-        className="relative h-36 w-24"
+        className={`relative z-10 flex h-28 w-28 items-center justify-center rounded-full border border-current/30 bg-black/20 ${theme.accent}`}
         animate={microActive ? { y: [0, -3, 2, 0], rotate: [0, 1, -1, 0] } : { y: 0, rotate: 0 }}
         transition={{ duration: 1.6, repeat: microActive ? Infinity : 0, ease: "easeInOut" }}
       >
-        <div className="absolute left-1/2 top-0 h-12 w-12 -translate-x-1/2 rounded-full bg-black/80 shadow-[0_0_25px_rgba(0,0,0,0.5)]" />
-        <div className="absolute left-1/2 top-10 h-20 w-16 -translate-x-1/2 rounded-[45%_45%_24%_24%] bg-black/80" />
-        <div className="absolute left-1/2 top-[4.6rem] h-20 w-28 -translate-x-1/2 bg-black/80 [clip-path:polygon(38%_0,62%_0,100%_100%,58%_84%,50%_100%,42%_84%,0_100%)]" />
-        <motion.div className="absolute left-1/2 top-[4.5rem] h-1 w-14 -translate-x-1/2 rounded-full bg-white/20" animate={microActive ? { opacity: [0.1, 0.7, 0.1] } : { opacity: 0.2 }} transition={{ duration: 0.8, repeat: Infinity }} />
+        <ArcanaIcon className="h-14 w-14 opacity-25" strokeWidth={1.25} aria-hidden="true" />
+        <div className="absolute inset-3 rounded-full border border-current/20" />
+        <motion.div className="absolute left-1/2 top-1/2 h-px w-16 -translate-x-1/2 -translate-y-1/2 bg-current/70" animate={microActive ? { opacity: [0.1, 0.8, 0.1], scaleX: [0.7, 1, 0.7] } : { opacity: 0.25 }} transition={{ duration: 0.8, repeat: Infinity }} />
       </motion.div>
       <AnimatePresence>
         {knotFormed && (
@@ -168,7 +201,7 @@ export default function TarotCard({ symbol, cardName, wuxing_phase, tri_layer, h
       </header>
 
       <div className="relative py-3">
-        <Silhouette theme={theme} knotFormed={knotFormed} microActive={microActive} />
+        <Silhouette theme={theme} knotFormed={knotFormed} microActive={microActive} cardName={cardName} />
         {microActive && <motion.div className={`absolute inset-x-3 bottom-2 h-px ${theme.accent} bg-current`} animate={{ opacity: [0.15, 0.8, 0.15], scaleX: [0.65, 1, 0.7] }} transition={{ duration: 0.9, repeat: Infinity }} />}
       </div>
 
