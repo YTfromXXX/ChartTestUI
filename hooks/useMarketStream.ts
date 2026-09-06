@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 
+export type Vector3Tuple = [number, number, number];
+export type OracleBranch = { id: string; probability: number; color?: string };
+
 export interface MarketData {
   symbol: string;
   timestamp?: string;
@@ -47,6 +50,10 @@ export interface MarketData {
     close: number;
     sma20: number;
   };
+  coordinate?: Vector3Tuple;
+  curvature?: number;
+  torsion?: number;
+  oracle_branches: OracleBranch[];
 }
 
 type PartialMarketData = Partial<MarketData> & {
@@ -58,7 +65,32 @@ type PartialMarketData = Partial<MarketData> & {
   symbols?: Record<string, PartialMarketData>;
   rendered_physics?: MarketData['rendered_physics'];
   visual_triggers?: MarketData['visual_triggers'];
+  oracle_prediction?: {
+    topology?: { kappa?: number; tau?: number };
+    branches?: Array<{ id?: string; prob?: number; probability?: number; color_hex?: string; color?: string }>;
+  };
+  coordinates?: unknown;
+  coordinate?: unknown;
+  position?: unknown;
+  latest_3d_coordinate?: unknown;
+  curvature?: number;
+  kappa?: number;
+  torsion?: number;
+  tau?: number;
 };
+
+function parseCoordinate(value: unknown): Vector3Tuple | undefined {
+  if (Array.isArray(value) && value.length >= 3 && value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+    return [value[0], value[1], value[2]];
+  }
+  if (value && typeof value === 'object') {
+    const point = value as { x?: unknown; y?: unknown; z?: unknown };
+    if ([point.x, point.y, point.z].every((item) => typeof item === 'number' && Number.isFinite(item))) {
+      return [point.x as number, point.y as number, point.z as number];
+    }
+  }
+  return undefined;
+}
 
 function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketData | null {
   const payload = value.data ?? value;
@@ -68,6 +100,13 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
   const triLayer: Partial<MarketData['tri_layer']> = payload.tri_layer ?? {};
   const status = payload.status ?? {};
   const hexagram = payload.hexagram_binary ?? triLayer.hexagram_binary ?? '000000';
+  const oracle = payload.oracle_prediction ?? {};
+  const topology = oracle.topology ?? {};
+  const branches = (oracle.branches ?? []).map((branch, index) => ({
+    id: branch.id ?? `branch-${index + 1}`,
+    probability: Number(branch.probability ?? branch.prob ?? 0),
+    color: branch.color ?? branch.color_hex,
+  }));
   return {
     symbol: resolvedSymbol,
     timestamp: payload.timestamp,
@@ -93,6 +132,10 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
     rendered_physics: payload.rendered_physics,
     visual_triggers: payload.visual_triggers,
     chart_data: payload.chart_data,
+    coordinate: parseCoordinate(payload.coordinate ?? payload.coordinates ?? payload.position ?? payload.latest_3d_coordinate),
+    curvature: Number(payload.curvature ?? payload.kappa ?? topology.kappa ?? 0),
+    torsion: Number(payload.torsion ?? payload.tau ?? topology.tau ?? 0),
+    oracle_branches: branches,
   };
 }
 
@@ -110,6 +153,7 @@ function parsePayload(payload: PartialMarketData): MarketData[] {
 export function useMarketStream(url: string, symbol?: string) {
   const { data: session } = useSession();
   const [marketDataMap, setMarketDataMap] = useState<Record<string, MarketData>>({});
+  const [coordinateHistoryMap, setCoordinateHistoryMap] = useState<Record<string, Vector3Tuple[]>>({});
   const [isConnected, setIsConnected] = useState(false);
   const [burstEvent, setBurstEvent] = useState(false);
   const [burstId, setBurstId] = useState(0);
@@ -133,7 +177,7 @@ export function useMarketStream(url: string, symbol?: string) {
     const connect = () => {
       if (stoppedRef.current) return;
       const streamUrl = symbol
-        ? `${url.replace(/\/ws\/signals\/?$/, '')}/ws/live/${encodeURIComponent(symbol.toUpperCase())}`
+        ? `${url.replace(/\/ws\/(signals|live\/[^/]+|oracle\/v1\/stream\/[^/]+)\/?$/, '')}/ws/oracle/v1/stream/${encodeURIComponent(symbol.toUpperCase())}`
         : url;
       const ws = new WebSocket(streamUrl);
       wsRef.current = ws;
@@ -156,6 +200,14 @@ export function useMarketStream(url: string, symbol?: string) {
             setMarketDataMap((previous) => {
               const next = { ...previous };
               updates.forEach((update) => { next[update.symbol] = update; });
+              return next;
+            });
+            setCoordinateHistoryMap((previous) => {
+              const next = { ...previous };
+              updates.forEach((update) => {
+                if (!update.coordinate) return;
+                next[update.symbol] = [...(previous[update.symbol] ?? []), update.coordinate].slice(-32);
+              });
               return next;
             });
             const fireworkTriggered = updates.some((update) => {
@@ -197,5 +249,5 @@ export function useMarketStream(url: string, symbol?: string) {
     };
   }, [url, symbol, session]);
 
-  return { marketDataMap, isConnected, burstEvent, burstId };
+  return { marketDataMap, coordinateHistoryMap, isConnected, burstEvent, burstId };
 }

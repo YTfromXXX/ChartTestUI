@@ -5,6 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { shaderMaterial } from '@react-three/drei';
 import { extend, type ThreeElement } from '@react-three/fiber';
+import type { Vector3Tuple } from '@/hooks/useMarketStream';
 
 // ==========================================
 // 1. カスタムシェーダーの定義 (GLSL)
@@ -130,6 +131,7 @@ interface DataTornadoProps {
   wuxingPhase: string;
   knotType: string;
   isOverdrive: boolean;
+  trajectory?: Vector3Tuple[];
 }
 
 const KNOT_MODES: Record<string, number> = {
@@ -139,7 +141,7 @@ const KNOT_MODES: Record<string, number> = {
   '巻き結び（崩壊）': 4,
 };
 
-export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType, isOverdrive }: DataTornadoProps) {
+export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType, isOverdrive, trajectory = [] }: DataTornadoProps) {
   const materialRef = useRef<any>(null);
   const PARTICLE_COUNT = 30000; // 3万個のデータストリーム
 
@@ -170,6 +172,15 @@ export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType
     }
   }, [wuxingPhase]);
 
+  const trailCurve = useMemo(() => {
+    if (trajectory.length < 2) return null;
+    const points = trajectory.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    return new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.5);
+  }, [trajectory]);
+  const isRising = trajectory.length < 2 || trajectory.at(-1)![1] >= trajectory.at(-2)![1];
+  const trailColor = isRising ? '#bff8ff' : '#8f174c';
+  const trailEmissive = isRising ? '#21d4fd' : '#5b0a38';
+
   // 毎フレーム（60fps）のシェーダー更新
   useFrame((state, delta) => {
     if (materialRef.current) {
@@ -188,25 +199,33 @@ export default function DataTornado({ s15Volume, s15Delta, wuxingPhase, knotType
   });
 
   return (
-    <points>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[positions, 3]}
-          count={PARTICLE_COUNT}
-          array={positions}
-          itemSize={3}
+    <group>
+      {trailCurve && (
+        <mesh position={[0, 0, 0]}>
+          <tubeGeometry args={[trailCurve, 96, isRising ? 0.065 : 0.09, 10, false]} />
+          <meshStandardMaterial color={trailColor} emissive={trailEmissive} emissiveIntensity={isRising ? 2.4 : 0.65} metalness={0.55} roughness={isRising ? 0.2 : 0.7} transparent opacity={0.94} />
+        </mesh>
+      )}
+      <points>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[positions, 3]}
+            count={PARTICLE_COUNT}
+            array={positions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <tornadoMaterial
+          ref={materialRef}
+          uColor1={new THREE.Color(colors.c1)}
+          uColor2={new THREE.Color(colors.c2)}
+          uKnotType={KNOT_MODES[knotType] ?? 0}
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
         />
-      </bufferGeometry>
-      <tornadoMaterial
-        ref={materialRef}
-        uColor1={new THREE.Color(colors.c1)}
-        uColor2={new THREE.Color(colors.c2)}
-        uKnotType={KNOT_MODES[knotType] ?? 0}
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending} // パーティクルが重なると白く発光する
-      />
-    </points>
+      </points>
+    </group>
   );
 }

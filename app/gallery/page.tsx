@@ -1,11 +1,15 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowLeft, CircleDot, Radio, ScanSearch, Sparkles } from "lucide-react";
+import { ArrowLeft, CircleDot, Radio, ScanSearch, Sparkles, UserRound } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import TarotCard, { type TarotCardProps, type TriLayerStatus, type WuxingPhase } from "@/components/TarotCard";
 import { useMarketStream } from "@/hooks/useMarketStream";
+import { calculateResonance, demoPortfolio, getTransitionRoute, type TransitionRoute } from "@/lib/portfolio";
+import { Canvas, useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+import { EffectComposer, DepthOfField } from "@react-three/postprocessing";
 
 type GalleryCard = TarotCardProps & { index: number; isLive: boolean };
 
@@ -82,6 +86,26 @@ function phaseFrom(value: string | undefined, fallback: WuxingPhase): WuxingPhas
   return normalized && phases.includes(normalized) ? normalized : fallback;
 }
 
+function GalleryTransition({ route }: { route: TransitionRoute }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const startedAt = useRef(performance.now());
+  const count = 260;
+  useFrame(() => {
+    if (!meshRef.current) return;
+    const progress = Math.min((performance.now() - startedAt.current) / 760, 1);
+    const matrix = new THREE.Matrix4();
+    for (let index = 0; index < count; index += 1) {
+      const angle = index * 2.399;
+      const radius = 1.2 + (index % 17) * 0.24;
+      const position = new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, route === 'voxel' ? -progress * (index % 13 + 2) : progress * 1.4);
+      matrix.makeTranslation(position.x, position.y, position.z).scale(new THREE.Vector3(0.08, 0.08, 0.08));
+      meshRef.current.setMatrixAt(index, matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+  return <Canvas camera={{ position: [0, 0, 7] }}><color attach="background" args={['#030712']} /><ambientLight intensity={1} /><instancedMesh ref={meshRef} args={[undefined, undefined, count]}><cylinderGeometry args={[0.08, 0.08, 0.08, 6]} /><meshBasicMaterial color={route === 'voxel' ? '#5eead4' : '#f0abfc'} transparent opacity={0.9} /></instancedMesh>{route === 'lens' && <EffectComposer><DepthOfField focusDistance={0.02} focalLength={0.16} bokehScale={12} /></EffectComposer>}</Canvas>;
+}
+
 export default function GalleryPage() {
   const { marketDataMap, isConnected } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws/signals");
   const demoCards = useMemo(() => arcanaCards.map((_, index) => demoState(index)), []);
@@ -102,6 +126,14 @@ export default function GalleryPage() {
 
   const activeCount = useMemo(() => Object.values(marketDataMap).filter((card) => card.tri_layer.micro !== "STABLE").length, [marketDataMap]);
   const updatedSymbol = Object.keys(marketDataMap).at(-1) ?? null;
+  const [transition, setTransition] = useState<{ symbol: string; route: TransitionRoute } | null>(null);
+
+  function openSymbol(symbol: string) {
+    const market = marketDataMap[symbol];
+    const route = getTransitionRoute(calculateResonance(demoPortfolio, market));
+    setTransition({ symbol, route });
+    window.setTimeout(() => { window.location.href = `/live/${encodeURIComponent(symbol)}?transition=${route}`; }, 780);
+  }
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-gray-950 px-4 py-6 text-stone-100 sm:px-8 lg:px-12">
@@ -111,7 +143,7 @@ export default function GalleryPage() {
       <div className="relative mx-auto max-w-[1800px]">
         <header className="mb-8 flex flex-col gap-6 border-b border-white/10 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <Link href="/" className="mb-5 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-stone-500 transition-colors hover:text-stone-200"><ArrowLeft className="h-3 w-3" /> Command center</Link>
+            <div className="mb-5 flex items-center gap-5"><Link href="/" className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-stone-500 transition-colors hover:text-stone-200"><ArrowLeft className="h-3 w-3" /> Command center</Link><Link href="/profile" className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-stone-500 hover:text-cyan-200"><UserRound className="h-3 w-3" /> Profile</Link></div>
             <div className="flex items-center gap-3"><Sparkles className="h-5 w-5 text-amber-200" /><p className="font-mono text-[10px] uppercase tracking-[0.42em] text-stone-500">The arcana observatory</p></div>
             <h1 className="mt-3 text-4xl font-medium tracking-[-0.04em] text-stone-100 sm:text-6xl">THE TWENTY-TWO</h1>
             <p className="mt-3 max-w-xl font-mono text-xs leading-6 text-stone-500">A living gallery of market archetypes. Each card carries its environment, knot, and micro-pressure as an active field.</p>
@@ -132,9 +164,9 @@ export default function GalleryPage() {
               transition={{ delay: index * 0.035, duration: 0.5 }}
               whileHover={{ scale: 1.045, zIndex: 30, transition: { duration: 0.2 } }}
             >
-              <Link href={`/live/${encodeURIComponent(card.symbol)}`} className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+              <button type="button" onClick={() => openSymbol(card.symbol)} className="block w-full rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
                 {card.isLive ? <TarotCard {...card} /> : <PendingCard card={card} />}
-              </Link>
+              </button>
             </motion.div>
           ))}
         </section>
@@ -144,6 +176,7 @@ export default function GalleryPage() {
           <span>major arcana / 00—21</span>
         </footer>
       </div>
+      {transition && <div className="fixed inset-0 z-50 bg-[#030712]" aria-label={`${transition.route} transition`}><GalleryTransition route={transition.route} /></div>}
     </main>
   );
 }

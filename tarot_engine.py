@@ -1,8 +1,8 @@
 """Tarot market mappings and minor arcana signal classification."""
 
 from datetime import datetime
-from math import atan, ceil, exp, log10, pi
-from typing import Any, Dict, List, Mapping, TypedDict
+from math import atan, ceil, exp, isfinite, log10, pi, sqrt
+from typing import Any, Dict, List, Mapping, Sequence, TypedDict
 
 import pandas as pd
 
@@ -89,6 +89,95 @@ def calculate_iching_weight(df_m7: pd.DataFrame, element: str) -> dict[str, Any]
         "hexagram_decimal": decimal,
         "volatility_weight": volatility_weight,
     }
+
+
+def calculate_knot_topology(price_history: Sequence[float] | pd.Series | pd.DataFrame) -> dict[str, float]:
+    """Calculate Frenet-Serret curvature and torsion for a price trajectory."""
+    if isinstance(price_history, pd.DataFrame):
+        values = price_history.get("close", pd.Series(dtype=float))
+    else:
+        values = price_history
+    prices = pd.to_numeric(pd.Series(values), errors="coerce").dropna().to_numpy(dtype=float)
+    if len(prices) < 4:
+        return {"kappa": 0.0, "tau": 0.0}
+
+    velocity = prices[1:] - prices[:-1]
+    acceleration = velocity[1:] - velocity[:-1]
+    jerk = acceleration[1:] - acceleration[:-1]
+    snap = jerk[1:] - jerk[:-1] if len(jerk) > 1 else [0.0]
+    first = [1.0, velocity[-1], acceleration[-1]]
+    second = [0.0, acceleration[-1], jerk[-1]]
+    third = [0.0, jerk[-1], snap[-1]]
+    cross = [
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    ]
+    first_norm = sqrt(sum(component * component for component in first))
+    cross_norm_squared = sum(component * component for component in cross)
+    curvature = sqrt(cross_norm_squared) / max(first_norm ** 3, 1e-12)
+    determinant = sum(
+        first[index] * (second[(index + 1) % 3] * third[(index + 2) % 3] - second[(index + 2) % 3] * third[(index + 1) % 3])
+        for index in range(3)
+    )
+    torsion = determinant / max(cross_norm_squared, 1e-12)
+    return {
+        "kappa": float(round(curvature if isfinite(curvature) else 0.0, 6)),
+        "tau": float(round(torsion if isfinite(torsion) else 0.0, 6)),
+    }
+
+
+def calculate_gravity_gradient(order_book: Mapping[str, Any] | None) -> float:
+    """Estimate signed liquidity gravity from bid and ask depth."""
+    if not order_book:
+        return 0.0
+
+    def weighted_depth(levels: Any) -> float:
+        if isinstance(levels, (int, float)):
+            return max(float(levels), 0.0)
+        total = 0.0
+        for level in levels if isinstance(levels, (list, tuple)) else []:
+            if isinstance(level, Mapping):
+                volume = level.get("volume", level.get("quantity", 0.0))
+                distance = level.get("distance", 1.0)
+            elif isinstance(level, (list, tuple)) and len(level) >= 2:
+                _, volume = level[:2]
+                distance = 1.0
+            else:
+                continue
+            try:
+                total += max(float(volume), 0.0) / max(abs(float(distance)), 1e-6)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    bid_depth = weighted_depth(order_book.get("bids", order_book.get("bid_volume", 0.0)))
+    ask_depth = weighted_depth(order_book.get("asks", order_book.get("ask_volume", 0.0)))
+    total_depth = bid_depth + ask_depth
+    return round((bid_depth - ask_depth) / total_depth, 6) if total_depth else 0.0
+
+
+def calculate_branch_probabilities(
+    kappa: float, tau: float, gravity_tensor: float
+) -> list[dict[str, str | float]]:
+    """Convert topology and liquidity gravity into four normalized attractors."""
+    curvature = max(float(kappa), 0.0)
+    torsion = float(tau)
+    gravity = max(-1.0, min(1.0, float(gravity_tensor)))
+    scores = [
+        exp(max(-20.0, min(20.0, 1.8 * curvature + gravity + 0.5 * torsion))),
+        exp(max(-20.0, min(20.0, 0.5 + 1.5 * abs(torsion) + 0.4 * curvature))),
+        exp(max(-20.0, min(20.0, 1.0 - 2.0 * curvature - abs(torsion) - abs(gravity)))),
+        exp(max(-20.0, min(20.0, 0.4 - gravity + 0.7 * abs(torsion)))),
+    ]
+    probabilities = [score / sum(scores) * 100.0 for score in scores]
+    rounded = [round(probability, 1) for probability in probabilities]
+    rounded[-1] = round(100.0 - sum(rounded[:-1]), 1)
+    branches = (("wands", "#FFD700"), ("swords", "#00FFFF"), ("cups", "#FFFFFF"), ("pentacles", "#800080"))
+    return [
+        {"id": branch_id, "prob": probability, "color_hex": color}
+        for (branch_id, color), probability in zip(branches, rounded)
+    ]
 
 
 def evaluate_micro_distortion(

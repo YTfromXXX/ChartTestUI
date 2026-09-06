@@ -2,9 +2,11 @@
 
 import { ArrowLeft, CircleDot, Radio, Wifi, WifiOff } from 'lucide-react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import LiveChartView from '@/components/LiveChartView';
+import TarotScene from '@/components/3d/TarotScene';
 import { useMarketStream } from '@/hooks/useMarketStream';
+import { calculateResonance, demoPortfolio, getTransitionRoute, type TransitionRoute } from '@/lib/portfolio';
 
 const arcanaBySymbol: Record<string, string> = {
   DOGEUSD: '0_THE_FOOL', BTCUSD: '1_THE_MAGICIAN', EURUSD: '2_THE_HIGH_PRIESTESS', XAUUSD: '3_THE_EMPRESS',
@@ -17,12 +19,16 @@ const arcanaBySymbol: Record<string, string> = {
 
 export default function LiveSymbolPage() {
   const params = useParams<{ symbol: string }>();
+  const searchParams = useSearchParams();
   const symbol = decodeURIComponent(params.symbol ?? '').toUpperCase();
-  const { marketDataMap, isConnected, burstEvent, burstId } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws/signals', symbol);
+  const { marketDataMap, coordinateHistoryMap, isConnected, burstEvent, burstId } = useMarketStream(process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws/signals', symbol);
   const data = marketDataMap[symbol];
   const selectedArcana = data?.major_arcana || arcanaBySymbol[symbol] || 'ARCANA_PENDING';
   const physics = data?.rendered_physics;
   const visuals = data?.visual_triggers;
+  const queryRoute = searchParams.get('transition');
+  const resonance = calculateResonance(demoPortfolio, data);
+  const transitionRoute: TransitionRoute = queryRoute === 'voxel' || queryRoute === 'lens' ? queryRoute : getTransitionRoute(resonance);
 
   return (
     <main className="min-h-screen bg-[#080b10] px-4 py-6 font-display text-stone-100 sm:px-8 lg:px-12">
@@ -52,6 +58,28 @@ export default function LiveSymbolPage() {
           ].map(([label, value]) => <div key={label as string}><p className="font-mono text-[9px] uppercase tracking-[0.18em] text-stone-600">{label}</p><p className="mt-1 font-mono text-sm text-cyan-100">{typeof value === 'number' ? value.toFixed(3) : '--'}</p></div>)}
         </section>
         <LiveChartView symbol={symbol} data={data} isConnected={isConnected} />
+        <TarotScene
+          className="relative mt-5 h-[620px] w-full overflow-hidden border border-cyan-300/20 bg-[#030712] shadow-[0_0_70px_rgba(34,211,238,0.08)]"
+          data={{
+            cardName: selectedArcana,
+            symbol,
+            knotType: data?.knot_type,
+            wuxingPhase: data?.wuxing_phase ?? 'EARTH',
+            isEmperorSynchronized: data?.is_emperor_synchronized ?? false,
+            s15Volume: data?.s15_volume ?? 0,
+            s15Delta: data?.s15_delta ?? 0,
+            hexagramBinary: data?.hexagram_binary,
+            elasticEnergy: data?.elastic_energy,
+            burstId,
+            triggerFirework: visuals?.trigger_firework,
+            backgroundHex: visuals?.background_hex,
+            iChingHexagramSymbol: visuals?.i_ching_hexagram_symbol,
+            trajectory: coordinateHistoryMap[symbol],
+            oracleBranches: data?.oracle_branches,
+            resonance,
+            transitionRoute,
+          }}
+        />
         {burstEvent && <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.2em] text-fuchsia-200">Knot burst detected / elastic threshold exceeded</p>}
         <p className="mt-4 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-stone-600"><CircleDot className="h-3 w-3" /> Selected symbol stream / one-second physics refresh {visuals?.i_ching_hexagram_symbol ? `/ ${visuals.i_ching_hexagram_symbol}` : ''}</p>
       </div>

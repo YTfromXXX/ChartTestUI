@@ -1,0 +1,12 @@
+'use client';
+
+import Link from 'next/link';
+import { ArrowLeft, Newspaper, Shield } from 'lucide-react';
+import DogMagician from '@/components/3d/DogMagician';
+import { demoPortfolio } from '@/lib/portfolio';
+
+const article = 'When company momentum and personal conviction move together, relative effect compounds through disciplined exposure. The portfolio field currently favors diversified signals over isolated noise.';
+
+export default function ProfilePage() {
+  return <main className="min-h-screen bg-[#080b10] px-4 py-6 text-stone-100 sm:px-8 lg:px-12"><div className="mx-auto max-w-6xl"><header className="mb-8 flex items-end justify-between border-b border-white/10 pb-6"><div><Link href="/gallery" className="mb-5 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-stone-500 hover:text-cyan-200"><ArrowLeft className="h-3 w-3" /> Arcana gallery</Link><p className="font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-200">Observer profile</p><h1 className="mt-2 text-4xl tracking-[-0.04em] sm:text-6xl">THE DOG MAGICIAN</h1></div><Shield className="h-6 w-6 text-emerald-300" /></header><div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><section className="overflow-hidden border border-cyan-200/20 bg-white/[0.025]"><DogMagician portfolio={demoPortfolio} articleText={article} className="h-[560px] w-full" /></section><aside className="border border-white/10 bg-white/[0.025] p-6"><div className="flex items-center gap-2 text-fuchsia-200"><Newspaper className="h-4 w-4" /><span className="font-mono text-[10px] uppercase tracking-[0.24em]">Portfolio field</span></div>{[['Asset deviation', demoPortfolio.totalAssetDeviation], ['Diversification', demoPortfolio.diversification], ['Volatility', demoPortfolio.volatility]].map(([label, value]) => <div key={label as string} className="mt-7 border-b border-white/10 pb-4"><div className="flex justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-stone-500"><span>{label as string}</span><span className="text-cyan-100">{(value as number).toFixed(2)}</span></div><div className="mt-3 h-1 bg-white/10"><div className="h-full bg-gradient-to-r from-cyan-300 to-fuchsia-400" style={{ width: `${(value as number) * 100}%` }} /></div></div>)}</aside></div></div></main>;
+}

@@ -29,6 +29,9 @@ from tarot_engine import (
     WATCHLIST_SYMBOLS,
     calculate_iching_visuals,
     calculate_iching_weight,
+    calculate_branch_probabilities,
+    calculate_gravity_gradient,
+    calculate_knot_topology,
     calculate_minor_arcana,
     calculate_physics_parameters,
     evaluate_court_promotion,
@@ -78,12 +81,34 @@ COINGECKO_CACHE_LOCK = threading.Lock()
 LAST_PROMOTED_CARDS: dict[str, str] = {}
 
 
+def _oracle_prediction(price_history: Any, order_book: dict[str, Any] | None) -> dict[str, Any]:
+    """Build the stable topology and four-attractor prediction contract."""
+    topology = calculate_knot_topology(price_history if price_history is not None else [])
+    gravity_tensor = calculate_gravity_gradient(order_book)
+    return {
+        "topology": {
+            "kappa": topology["kappa"],
+            "tau": topology["tau"],
+            "gravity_tensor": gravity_tensor,
+        },
+        "branches": calculate_branch_probabilities(
+            topology["kappa"], topology["tau"], gravity_tensor
+        ),
+    }
+
+
 def _dummy_knot_payload(symbol: str) -> dict[str, Any]:
     """Create a lightweight one-second demo payload for a subscribed symbol."""
     price = 100.0 + random.uniform(-2.0, 2.0)
     delta = random.uniform(-1.0, 1.0)
     rsi = random.uniform(10.0, 90.0)
     physics = calculate_physics_parameters(rsi, random.uniform(100.0, 1000.0))
+    price_history = [price + random.uniform(-0.8, 0.8) for _ in range(8)]
+    price_history[-1] = price
+    oracle_prediction = _oracle_prediction(
+        price_history,
+        {"bid_volume": random.uniform(100.0, 1000.0), "ask_volume": random.uniform(100.0, 1000.0)},
+    )
     return {
         "event": "KNOT_UPDATE", "symbol": symbol,
         "major_arcana": "0_THE_FOOL" if symbol.startswith("DOGE") else "4_THE_EMPEROR",
@@ -94,6 +119,12 @@ def _dummy_knot_payload(symbol: str) -> dict[str, Any]:
         "tarot_attribute": {"element": "FIRE", "polarity": "dynamic"},
         "hexagram_binary": format(random.randrange(64), "06b"),
         "tri_layer": {"macro": "TRENDING", "meso": "KNOT_FORMED", "micro": "PRESSURE"},
+        "oracle_prediction": oracle_prediction,
+        "coordinate": [
+            round(delta * 2.0, 4),
+            round((rsi - 50.0) / 20.0, 4),
+            round(float(oracle_prediction["topology"]["kappa"]) * 4.0 + float(oracle_prediction["topology"]["tau"]), 4),
+        ],
         "s15_volume": round(random.uniform(100.0, 1000.0), 2),
         "s15_delta": round(delta, 4), "is_emperor_synchronized": abs(delta) > 0.8,
         "chart_data": {"time": int(time.time()), "open": price - delta, "high": price + 0.5, "low": price - 0.5, "close": price, "sma20": price - 0.1},
@@ -449,6 +480,16 @@ def fetch_and_calculate_sync(symbol: str | None = None) -> dict[str, Any] | None
                 ) if len(s15_frame) >= 4 else 0.0
                 signal["s15_volume"] = float(s15_frame["volume"].tail(4).sum())
                 signal["is_emperor_synchronized"] = signal["minor_arcana"].startswith("KING_") if isinstance(signal["minor_arcana"], str) else False
+                signal["live_payload"] = _live_payload(
+                    current_symbol,
+                    {
+                        "history": m7_frame,
+                        "price_history": s15_frame["close"],
+                        "price": signal.get("last", signal.get("bid", 0.0)),
+                        "order_book": signal.get("order_book"),
+                        **signal,
+                    },
+                )
                 if (
                     isinstance(promoted, str)
                     and promoted.startswith(("KNIGHT_", "QUEEN_", "KING_"))
@@ -526,6 +567,11 @@ def _live_payload(symbol: str, market_data: dict[str, Any]) -> dict[str, Any]:
     visuals = calculate_iching_visuals(float(physics["complexity_c"]))
     history = market_data.get("history")
     chart_data = _chart_data_from_frame(history) if isinstance(history, pd.DataFrame) else None
+    price_history = market_data.get("price_history", history)
+    oracle_prediction = _oracle_prediction(price_history, market_data.get("order_book"))
+    prices = pd.to_numeric(pd.Series(price_history), errors="coerce").dropna().to_numpy(dtype=float)
+    latest_delta = float(prices[-1] - prices[-2]) if len(prices) > 1 else 0.0
+    topology = oracle_prediction["topology"]
     return {
         "symbol": symbol,
         "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
@@ -539,6 +585,12 @@ def _live_payload(symbol: str, market_data: dict[str, Any]) -> dict[str, Any]:
             "trigger_firework": physics["trigger_firework"],
             "i_ching_hexagram_symbol": visuals["i_ching_hexagram_symbol"],
         },
+        "oracle_prediction": oracle_prediction,
+        "coordinate": [
+            0.0,
+            round(latest_delta, 6),
+            round(float(topology["kappa"]) * 4.0 + float(topology["tau"]), 6),
+        ],
         "chart_data": chart_data,
     }
 
@@ -581,6 +633,7 @@ def _tarot_screener_payload(symbol: str, signal: dict[str, Any]) -> dict[str, An
             "meso": minor_card,
             "micro": micro_status,
         },
+        "oracle_prediction": signal.get("live_payload", {}).get("oracle_prediction", {}),
         "chart_data": signal.get("chart_data"),
     }
 
@@ -684,6 +737,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.exception("WebSocket endpoint stopped unexpectedly.")
 
 
+@app.websocket("/ws/oracle/v1/stream/{symbol}")
 @app.websocket("/ws/live/{symbol}")
 async def live_websocket_endpoint(websocket: WebSocket, symbol: str) -> None:
     """Stream the 3D physics contract for one symbol once per second."""
