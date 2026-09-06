@@ -23,6 +23,10 @@ type TarotSceneData = {
   elasticEnergy?: number;
   burstId?: number;
   tarotColor?: string;
+  isGraphMode?: boolean;
+  triggerFirework?: boolean;
+  backgroundHex?: string;
+  iChingHexagramSymbol?: string;
 };
 
 type TarotSceneProps = {
@@ -67,13 +71,13 @@ export default function TarotScene({ data, className }: TarotSceneProps) {
         <pointLight position={[4, 5, 4]} intensity={18} distance={18} color="#f8fafc" />
         <pointLight position={[-3, 1, 1]} intensity={8} distance={12} color={data.wuxingPhase === 'FIRE' ? '#ef4444' : '#22d3ee'} />
 
-        <CameraController isZooming={data.isEmperorSynchronized} focusTarget={knotCenter} controls={controlsRef} />
-        <OrbitControls ref={controlsRef} enabled={!data.isEmperorSynchronized} enableDamping enableZoom />
+        <CameraController isZooming={data.isEmperorSynchronized} isGraphMode={data.isGraphMode ?? !data.isEmperorSynchronized} focusTarget={knotCenter} controls={controlsRef} />
+        <OrbitControls ref={controlsRef} enabled={data.isGraphMode ?? !data.isEmperorSynchronized} enableDamping enableZoom />
         <TarotCard3D data={data} />
         <group position={[0.25, 0, 0]}>
           <HexagramTemple hexagramBinary={data.hexagramBinary ?? '101100'} />
           <DataTornado s15Volume={data.s15Volume} s15Delta={data.s15Delta} wuxingPhase={data.wuxingPhase} knotType={data.knotType ?? ''} isOverdrive={data.isOverdrive ?? false} />
-          <KnotFireworks burstPosition={knotCenter} energy={data.elasticEnergy ?? 0} tarotColor={data.tarotColor ?? '#e0ff00'} active={Boolean(data.elasticEnergy)} />
+          <KnotFireworks burstPosition={knotCenter} energy={data.elasticEnergy ?? 0} tarotColor={data.tarotColor ?? '#e0ff00'} backgroundHex={data.backgroundHex} triggerFirework={data.triggerFirework} burstId={data.burstId} active={Boolean(data.triggerFirework)} />
         </group>
         <Environment preset="night" />
       </Canvas>

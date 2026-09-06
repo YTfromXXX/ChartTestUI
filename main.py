@@ -27,10 +27,13 @@ from mt5_executor import MT5Executor
 from tarot_engine import (
     MAJOR_ARCANA_SYMBOLS,
     WATCHLIST_SYMBOLS,
+    calculate_iching_visuals,
     calculate_iching_weight,
     calculate_minor_arcana,
+    calculate_physics_parameters,
     evaluate_court_promotion,
     evaluate_court_card,
+    map_market_archetype,
 )
 
 try:
@@ -373,6 +376,10 @@ def _fetch_coingecko_signal(symbol: str) -> dict[str, Any] | None:
         "minor_arcana": calculate_minor_arcana(price_frame, symbol=symbol),
         "chart_data": chart_data,
     }
+    result["live_payload"] = _live_payload(
+        symbol,
+        {"history": price_frame, "price": float(latest["close"]), "volume_24h": 1.0},
+    )
     with COINGECKO_CACHE_LOCK:
         COINGECKO_CACHE[symbol] = (now, result)
     return result
@@ -422,6 +429,9 @@ def fetch_and_calculate_sync(symbol: str | None = None) -> dict[str, Any] | None
             minor_card = calculate_minor_arcana(m7_frame, symbol=current_symbol) if m7_frame is not None else None
             signal["minor_arcana"] = minor_card
             signal["chart_data"] = _chart_data_from_frame(m7_frame)
+            physics_input: dict[str, Any] = {"history": m7_frame, **signal}
+            physics_input["price"] = signal.get("last", signal.get("bid", 0.0))
+            signal["live_payload"] = _live_payload(current_symbol, physics_input)
             s15_frame = _fetch_s15_frame(current_symbol)
             if m7_frame is not None and s15_frame is not None:
                 iching = calculate_iching_weight(m7_frame, _element_for_symbol(current_symbol))
@@ -507,6 +517,30 @@ def _element_for_symbol(symbol: str) -> str:
         if entry["symbol"] == symbol:
             return entry["element"]
     return "EARTH"
+
+
+def _live_payload(symbol: str, market_data: dict[str, Any]) -> dict[str, Any]:
+    """Build the stable one-second payload consumed by the 3D chart."""
+    physics = calculate_physics_parameters(market_data)
+    archetype = map_market_archetype(symbol, physics)
+    visuals = calculate_iching_visuals(float(physics["complexity_c"]))
+    history = market_data.get("history")
+    chart_data = _chart_data_from_frame(history) if isinstance(history, pd.DataFrame) else None
+    return {
+        "symbol": symbol,
+        "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
+        "rendered_physics": {
+            key: physics[key]
+            for key in ("thickness_r", "tension_t", "complexity_c", "tornado_tilt_deg", "gravity_g")
+        },
+        "visual_triggers": {
+            "knot_model": archetype["knot_model"],
+            "background_hex": visuals["background_hex"],
+            "trigger_firework": physics["trigger_firework"],
+            "i_ching_hexagram_symbol": visuals["i_ching_hexagram_symbol"],
+        },
+        "chart_data": chart_data,
+    }
 
 
 def _tarot_screener_payload(symbol: str, signal: dict[str, Any]) -> dict[str, Any]:
@@ -648,3 +682,23 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected.")
     except Exception:
         logger.exception("WebSocket endpoint stopped unexpectedly.")
+
+
+@app.websocket("/ws/live/{symbol}")
+async def live_websocket_endpoint(websocket: WebSocket, symbol: str) -> None:
+    """Stream the 3D physics contract for one symbol once per second."""
+    await websocket.accept()
+    normalized_symbol = symbol.strip().upper()
+    try:
+        while True:
+            result = await asyncio.to_thread(fetch_and_calculate_sync, normalized_symbol)
+            signal = result.get("symbols", {}).get(normalized_symbol) if result else None
+            if isinstance(signal, dict) and isinstance(signal.get("live_payload"), dict):
+                await websocket.send_json(signal["live_payload"])
+            else:
+                await websocket.send_json(_live_payload(normalized_symbol, {"price": 1.0}))
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        logger.info("Live WebSocket client disconnected for %s.", normalized_symbol)
+    except Exception:
+        logger.exception("Live WebSocket endpoint stopped unexpectedly for %s.", normalized_symbol)

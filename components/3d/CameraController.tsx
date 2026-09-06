@@ -7,26 +7,37 @@ import { useMemo } from 'react';
 
 type CameraControllerProps = {
   isZooming: boolean;
+  isGraphMode?: boolean;
   focusTarget: THREE.Vector3;
   controls?: React.RefObject<OrbitControlsImpl | null>;
 };
 
-export default function CameraController({ isZooming, focusTarget, controls }: CameraControllerProps) {
-  const { camera } = useThree();
+export default function CameraController({ isZooming, isGraphMode = true, focusTarget, controls }: CameraControllerProps) {
+  const { camera, scene } = useThree();
   const target = useMemo(() => new THREE.Vector3(), []);
   const destination = useMemo(() => new THREE.Vector3(), []);
-  const defaultPosition = useMemo(() => new THREE.Vector3(0, 0.8, 7), []);
   const zoomOffset = useMemo(() => new THREE.Vector3(0.15, 0.08, 0.55), []);
+  const cinematicOffset = useMemo(() => new THREE.Vector3(0, -0.7, 4.8), []);
 
   useFrame((_, delta) => {
+    const cinematicMode = !isGraphMode;
+    if (scene.fog instanceof THREE.FogExp2) scene.fog.density = cinematicMode ? 0.035 : 0;
+    if (controls?.current) {
+      controls.current.enabled = isGraphMode && !isZooming;
+    }
+
+    if (isGraphMode) {
+      controls?.current?.update();
+      return;
+    }
+
     const factor = 1 - Math.exp(-delta * (isZooming ? 4.5 : 2.2));
-    target.lerp(isZooming ? focusTarget : new THREE.Vector3(0, 0, 0), factor);
-    destination.copy(isZooming ? focusTarget : new THREE.Vector3(0, 0, 0));
-    destination.add(isZooming ? zoomOffset : defaultPosition);
+    target.lerp(focusTarget, factor);
+    destination.copy(focusTarget);
+    destination.add(isZooming ? zoomOffset : cinematicOffset);
     camera.position.lerp(destination, factor);
 
     if (controls?.current) {
-      controls.current.enabled = !isZooming;
       controls.current.target.lerp(target, factor);
       controls.current.update();
     } else {

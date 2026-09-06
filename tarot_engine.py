@@ -1,9 +1,12 @@
 """Tarot market mappings and minor arcana signal classification."""
 
-from math import ceil
-from typing import Any, Dict, List, TypedDict
+from datetime import datetime
+from math import atan, ceil, exp, log10, pi
+from typing import Any, Dict, List, Mapping, TypedDict
 
 import pandas as pd
+
+from config.archetype_matrix import ARCHETYPE_MATRIX
 
 
 class MajorArcanaSymbol(TypedDict):
@@ -409,3 +412,105 @@ def evaluate_court_card(
     if confirmed_macro:
         return "KING_OF_WANDS"
     return "KNIGHT_OF_WANDS"
+
+
+ICHING_SYMBOLS = [
+    "䷀", "䷁", "䷂", "䷃", "䷄", "䷅", "䷆", "䷇", "䷈", "䷉", "䷊", "䷋", "䷌", "䷍", "䷎", "䷏",
+    "䷐", "䷑", "䷒", "䷓", "䷔", "䷕", "䷖", "䷗", "䷘", "䷙", "䷚", "䷛", "䷜", "䷝", "䷞", "䷟",
+    "䷠", "䷡", "䷢", "䷣", "䷤", "䷥", "䷦", "䷧", "䷨", "䷩", "䷪", "䷫", "䷬", "䷭", "䷮", "䷯",
+    "䷰", "䷱", "䷲", "䷳", "䷴", "䷵", "䷶", "䷷", "䷸", "䷹", "䷺", "䷻", "䷼", "䷽", "䷾", "䷿",
+]
+
+_ICHING_COLORS = ("#0B1F33", "#123C4A", "#2B5D4F", "#667A3E", "#A77B35", "#9C4A3C", "#5C315D", "#E0B44C")
+
+
+def _market_value(data: Mapping[str, Any], *names: str, default: float = 0.0) -> float:
+    """Read the first finite numeric market field, treating bad feeds as missing."""
+    for name in names:
+        try:
+            value = float(data.get(name, default))
+            if pd.notna(value):
+                return value
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _sigmoid(value: float) -> float:
+    value = max(-60.0, min(60.0, value))
+    return 1.0 / (1.0 + exp(-value))
+
+
+def calculate_physics_parameters(market_data: Mapping[str, Any]) -> dict[str, float | bool]:
+    """Convert normalized market fields into the 3D chart physics contract.
+
+    ``market_data`` may contain scalar indicators and/or ``history`` (a DataFrame).
+    Missing optional indicators use neutral values so a provider outage cannot emit NaN.
+    """
+    history = market_data.get("history")
+    frame = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
+    close = pd.to_numeric(frame.get("close", pd.Series(dtype=float)), errors="coerce").dropna()
+    volume = pd.to_numeric(frame.get("volume", frame.get("tick_volume", pd.Series(dtype=float))), errors="coerce").dropna()
+    current_price = _market_value(market_data, "price", "close", default=float(close.iloc[-1]) if not close.empty else 1.0)
+    previous_price = _market_value(market_data, "previous_close", default=float(close.iloc[-2]) if len(close) > 1 else current_price)
+    short_return = _market_value(market_data, "short_return", "price_change_rate", default=(current_price - previous_price) / max(abs(previous_price), 1e-12))
+    rsi = _market_value(market_data, "rsi", default=float(_rsi(close).iloc[-1]) if len(close) >= 15 and pd.notna(_rsi(close).iloc[-1]) else 50.0)
+
+    market_cap = max(_market_value(market_data, "market_cap", "market_capitalization", default=current_price), 1e-12)
+    volume_24h = max(_market_value(market_data, "volume_24h", "quote_volume", default=float(volume.tail(24).sum()) if not volume.empty else 1.0), 1e-12)
+    thickness_r = log10(1.0 + market_cap) / max(log10(1.0 + volume_24h), 1e-12)
+
+    tension_t = abs(short_return) * 100.0 + abs(rsi - 50.0) / 50.0
+    if len(close) >= 20:
+        sma20 = close.rolling(20).mean()
+        std20 = close.rolling(20).std()
+        bandwidth = float((4 * std20.iloc[-1]) / max(abs(sma20.iloc[-1]), 1e-12))
+        baseline = float(((4 * std20) / sma20.abs().replace(0, float("nan"))).dropna().tail(20).mean())
+        complexity_c = _sigmoid((bandwidth / max(baseline, 1e-12) - 1.0) * 3.0)
+        short_ma = float(close.rolling(5).mean().iloc[-1])
+        long_ma = float(close.rolling(20).mean().iloc[-1])
+    else:
+        bandwidth = _market_value(market_data, "bollinger_bandwidth", "bbw")
+        baseline = max(_market_value(market_data, "bollinger_baseline", default=bandwidth), 1e-12)
+        complexity_c = _sigmoid((bandwidth / baseline - 1.0) * 3.0)
+        short_ma = _market_value(market_data, "short_ma", "ma_short", default=current_price)
+        long_ma = _market_value(market_data, "long_ma", "ma_long", default=current_price)
+
+    ma_divergence = (short_ma - long_ma) / max(abs(long_ma), 1e-12)
+    macd_histogram = _market_value(market_data, "macd_histogram", "macd_hist", default=ma_divergence * current_price)
+    macd_scale = max(abs(current_price), 1e-12)
+    tornado_tilt_deg = (180.0 / pi) * atan((ma_divergence * 10.0) + (macd_histogram / macd_scale * 10.0))
+    bid_volume = _market_value(market_data, "bid_volume", "buy_volume")
+    ask_volume = _market_value(market_data, "ask_volume", "sell_volume")
+    imbalance = (bid_volume - ask_volume) / max(bid_volume + ask_volume, 1e-12) if bid_volume + ask_volume else 0.0
+    return {
+        "thickness_r": round(max(0.0, thickness_r), 6),
+        "tension_t": round(max(0.0, tension_t), 6),
+        "complexity_c": round(max(0.0, min(1.0, complexity_c)), 6),
+        "tornado_tilt_deg": round(tornado_tilt_deg, 6),
+        "gravity_g": round(max(-1.0, min(1.0, imbalance)), 6),
+        "trigger_firework": abs(tornado_tilt_deg) > 45.0,
+    }
+
+
+def map_market_archetype(symbol: str, physics: Mapping[str, Any]) -> dict[str, str | int]:
+    """Map the configured Major Arcana matrix and knot model to current conditions."""
+    normalized = symbol.upper()
+    arcana = next((number for number, entry in ARCHETYPE_MATRIX.items() if normalized in entry["symbol_pool"]), None)
+    if arcana is None:
+        volatility = float(physics.get("complexity_c", 0.5))
+        tilt = abs(float(physics.get("tornado_tilt_deg", 0.0)))
+        arcana = 16 if tilt > 45 else 10 if volatility < 0.35 else 1
+    entry = ARCHETYPE_MATRIX[arcana]
+    knot_model = {"本結び": "honda_knot", "らせん結び": "spiral_knot"}.get(entry["knot_type"], entry["knot_type"])
+    return {"major_arcana": arcana, "knot_model": knot_model}
+
+
+def calculate_iching_visuals(volatility: float, timestamp: datetime | None = None) -> dict[str, str]:
+    """Select a deterministic 64-hexagram symbol and seasonal background color."""
+    moment = timestamp or datetime.utcnow()
+    seasonal = (moment.month - 1) // 3
+    normalized = max(0.0, min(1.0, float(volatility)))
+    decimal = (int(round(normalized * 63.0)) + seasonal * 7) % 64
+    color_index = (decimal // 8 + seasonal) % len(_ICHING_COLORS)
+    return {"i_ching_hexagram_symbol": ICHING_SYMBOLS[decimal], "background_hex": _ICHING_COLORS[color_index]}

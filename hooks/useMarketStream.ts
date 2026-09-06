@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 
 export interface MarketData {
   symbol: string;
+  timestamp?: string;
   major_arcana: string;
   knot_type?: string;
   market_behavior?: string;
@@ -25,6 +26,19 @@ export interface MarketData {
   elastic_energy?: number;
   volume_mass?: number;
   physics_event?: 'knot_burst' | 'stable';
+  rendered_physics?: {
+    thickness_r: number;
+    tension_t: number;
+    complexity_c: number;
+    tornado_tilt_deg: number;
+    gravity_g: number;
+  };
+  visual_triggers?: {
+    knot_model: string;
+    background_hex: string;
+    trigger_firework: boolean;
+    i_ching_hexagram_symbol: string;
+  };
   chart_data?: {
     time: number;
     open: number;
@@ -42,6 +56,8 @@ type PartialMarketData = Partial<MarketData> & {
   tri_layer?: Partial<MarketData['tri_layer']>;
   data?: PartialMarketData;
   symbols?: Record<string, PartialMarketData>;
+  rendered_physics?: MarketData['rendered_physics'];
+  visual_triggers?: MarketData['visual_triggers'];
 };
 
 function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketData | null {
@@ -54,6 +70,7 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
   const hexagram = payload.hexagram_binary ?? triLayer.hexagram_binary ?? '000000';
   return {
     symbol: resolvedSymbol,
+    timestamp: payload.timestamp,
     major_arcana: payload.major_arcana ?? '',
     knot_type: payload.knot_type,
     market_behavior: payload.market_behavior,
@@ -73,6 +90,8 @@ function normalizeMarketData(value: PartialMarketData, symbol?: string): MarketD
     elastic_energy: payload.elastic_energy,
     volume_mass: payload.volume_mass,
     physics_event: payload.event === 'knot_burst' || payload.event === 'stable' ? payload.event : undefined,
+    rendered_physics: payload.rendered_physics,
+    visual_triggers: payload.visual_triggers,
     chart_data: payload.chart_data,
   };
 }
@@ -102,6 +121,7 @@ export function useMarketStream(url: string, symbol?: string) {
     stoppedRef.current = false;
     let reconnectDelay = 1000;
     let burstResetTimeout: ReturnType<typeof setTimeout> | null = null;
+    let fireworkWasActive = false;
 
     const clearReconnect = () => {
       if (reconnectTimeoutRef.current) {
@@ -112,7 +132,10 @@ export function useMarketStream(url: string, symbol?: string) {
 
     const connect = () => {
       if (stoppedRef.current) return;
-      const ws = new WebSocket(url);
+      const streamUrl = symbol
+        ? `${url.replace(/\/ws\/signals\/?$/, '')}/ws/live/${encodeURIComponent(symbol.toUpperCase())}`
+        : url;
+      const ws = new WebSocket(streamUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -135,7 +158,13 @@ export function useMarketStream(url: string, symbol?: string) {
               updates.forEach((update) => { next[update.symbol] = update; });
               return next;
             });
-            if (updates.some((update) => update.physics_event === 'knot_burst')) {
+            const fireworkTriggered = updates.some((update) => {
+              const active = update.visual_triggers?.trigger_firework === true;
+              const risingEdge = active && !fireworkWasActive;
+              fireworkWasActive = active;
+              return risingEdge;
+            });
+            if (fireworkTriggered || updates.some((update) => update.physics_event === 'knot_burst')) {
               setBurstId((current) => current + 1);
               setBurstEvent(true);
               if (burstResetTimeout) clearTimeout(burstResetTimeout);
